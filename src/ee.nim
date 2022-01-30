@@ -71,23 +71,23 @@ proc op_jalr() =
     prepare_branch_delay()
     delayed_pc = cast[uint32](gprs[rs] and u128(0xFFFFFFFF))
 
-proc op_or() =
-    let rs = (opcode shr 21) and 0b11111
-    let rt = (opcode shr 16) and 0b11111
-    let rd = (opcode shr 11) and 0b11111
-    gprs[rd] = (not gprs[rs]) and (not gprs[rt])
-
 proc op_nor() =
     let rs = (opcode shr 21) and 0b11111
     let rt = (opcode shr 16) and 0b11111
     let rd = (opcode shr 11) and 0b11111
-    gprs[rd] = gprs[rs] or gprs[rt]
+    gprs[rd] = (gprs[rd] and (not u128(0xFFFFFFFFFFFFFFFF))) or ((not (gprs[rs] or gprs[rt])) and u128(0xFFFFFFFFFFFFFFFF)) 
+
+proc op_or() =
+    let rs = (opcode shr 21) and 0b11111
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    gprs[rd] = (gprs[rd] and (not u128(0xFFFFFFFFFFFFFFFF))) or ((gprs[rs] or gprs[rt]) and u128(0xFFFFFFFFFFFFFFFF)) 
 
 proc op_and() =
     let rs = (opcode shr 21) and 0b11111
     let rt = (opcode shr 16) and 0b11111
     let rd = (opcode shr 11) and 0b11111
-    gprs[rd] = gprs[rs] and gprs[rt]
+    gprs[rd] = (gprs[rd] and (not u128(0xFFFFFFFFFFFFFFFF))) or ((gprs[rs] and gprs[rt]) and u128(0xFFFFFFFFFFFFFFFF)) 
 
 proc op_addu() =
     let rs = (opcode shr 21) and 0b11111
