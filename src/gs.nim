@@ -66,10 +66,24 @@ var height: uint64
 var GS_CSR*: uint64
 var GS_IMR*: uint64
 
-var vertex_queue: seq[array[2, uint64]]
-var color_queue: seq[array[3, uint64]]
+#X, Y, Z, R, G, B, A
+var vertex_buffer: array[3, array[7, uint64]]
+var cur_vertex_buffer_size: uint8 = 1
 
 
+proc vertex_kick() =
+    vertex_buffer[0] = vertex_buffer[1]
+    vertex_buffer[1] = vertex_buffer[2]
+    vertex_buffer[2] = [0'u64, 0'u64, 0'u64, 0'u64, 0'u64, 0'u64, 0'u64]
+    if cur_vertex_buffer_size != 3:
+        cur_vertex_buffer_size += 1
+    
+
+proc draw_kick() =
+    if cur_vertex_buffer_size == 3:
+        vertex_array.append vertex(vec2(cfloat((vertex_buffer[0][0] - x_offset) and 0x1FF), cfloat((vertex_buffer[0][1] - y_offset) and 0x1FF)), color(uint8(vertex_buffer[0][3]), uint8(vertex_buffer[0][4]), uint8(vertex_buffer[0][5])))
+        vertex_array.append vertex(vec2(cfloat((vertex_buffer[1][0] - x_offset) and 0x1FF), cfloat((vertex_buffer[1][1] - y_offset) and 0x1FF)), color(uint8(vertex_buffer[1][3]), uint8(vertex_buffer[1][4]), uint8(vertex_buffer[1][5])))
+        vertex_array.append vertex(vec2(cfloat((vertex_buffer[2][0] - x_offset) and 0x1FF), cfloat((vertex_buffer[2][1] - y_offset) and 0x1FF)), color(uint8(vertex_buffer[2][3]), uint8(vertex_buffer[2][4]), uint8(vertex_buffer[2][5])))
 
 proc write_hwreg(data: uint64) =
     let data_format = cast[uint32]((BITBLTBUF shr 24) and 0b111111)
@@ -88,15 +102,16 @@ proc write_hwreg(data: uint64) =
             let a2 = cast[uint8]((pixel2 shr 0) and 0xFF)
 
             var offset = dest_y*1024*4 + dest_x*4
-            vram_buffer[offset + 0] = r1
-            vram_buffer[offset + 1] = g1
-            vram_buffer[offset + 2] = b1
-            vram_buffer[offset + 3] = a1
+            if (offset + 7) < 4194304:
+                vram_buffer[offset + 0] = r1
+                vram_buffer[offset + 1] = g1
+                vram_buffer[offset + 2] = b1
+                vram_buffer[offset + 3] = a1
 
-            vram_buffer[offset + 4] = r2
-            vram_buffer[offset + 5] = g2
-            vram_buffer[offset + 6] = b2
-            vram_buffer[offset + 7] = a2
+                vram_buffer[offset + 4] = r2
+                vram_buffer[offset + 5] = g2
+                vram_buffer[offset + 6] = b2
+                vram_buffer[offset + 7] = a2
 
             dest_x += 2
             if (dest_x - (TRXPOS shr 32) and 0b11111111111) >= width:
@@ -116,12 +131,7 @@ proc push_prim_data*(prim_data: uint64) =
     let prim_type = cast[uint32](prim_data and 0b111)
     case prim_type:
         of 3: # Triangle
-            if color_queue.len != 0 and vertex_queue.len != 0:
-                vertex_array.append vertex(vec2(cfloat((vertex_queue[0][0] - x_offset) and 0x1FF), cfloat((vertex_queue[0][1] - y_offset) and 0x1FF)), color(uint8(color_queue[0][0]), uint8(color_queue[0][1]), uint8(color_queue[0][2])))
-                vertex_array.append vertex(vec2(cfloat((vertex_queue[1][0] - x_offset) and 0x1FF), cfloat((vertex_queue[1][1] - y_offset) and 0x1FF)), color(uint8(color_queue[0][0]), uint8(color_queue[0][1]), uint8(color_queue[0][2])))
-                vertex_array.append vertex(vec2(cfloat((vertex_queue[2][0] - x_offset) and 0x1FF), cfloat((vertex_queue[2][1] - y_offset) and 0x1FF)), color(uint8(color_queue[0][0]), uint8(color_queue[0][1]), uint8(color_queue[0][2])))
-                vertex_queue = newSeq[array[2, uint64]](0)
-                color_queue = newSeq[array[3, uint64]](0)
+            discard
         else: echo "Unhandled push prim data prim type " & $prim_type
     
 
@@ -135,22 +145,26 @@ proc push_packed_packet*(packet: UInt128, reg: uint32) =
             let g = cast[uint64]((packet shr 32) and u128(0xFF))
             let b = cast[uint64]((packet shr 64) and u128(0xFF))
             let a = cast[uint64]((packet shr 96) and u128(0xFF))
-            color_queue.add([r, g, b])
-            push_prim_data(0b11)
+            vertex_buffer[2][3] = r
+            vertex_buffer[2][4] = g
+            vertex_buffer[2][5] = b
+            vertex_buffer[2][6] = a
             RGBAQ = RGBAQ and (not 0xFFFFFFFF'u64)
             RGBAQ = RGBAQ or r or (g shl 8) or (b shl 16) or (a shl 24)
         of 0x03: 
             echo "UV"
             discard # UV
         of 0x04:
-            # XYZ2F/XYZ3F
+            # XYZ2F
             let x = cast[uint64]((packet shr 0) and u128(0xFFF))
             let y = cast[uint64]((packet shr 32) and u128(0xFFF))
             let z = cast[uint64]((packet shr 64) and u128(0xFFFFFF))
             let f = cast[uint64]((packet shr 96) and u128(0xF))
-            vertex_queue.add([x, y])
-            if vertex_queue.len == 3:
-                push_prim_data(0b11)
+            vertex_buffer[2][0] = x
+            vertex_buffer[2][1] = y
+            vertex_buffer[2][2] = z
+            vertex_kick()
+            draw_kick()
             XYZ2F = 0
             XYZ2F = x or (y shl 16) or (z shl 32) or (f shl 56)
         of 0x09: CLAMP_2 = cast[uint64](packet and u128(0xFFFFFFFFFFFFFFFF))
@@ -163,13 +177,25 @@ proc push_packed_packet*(packet: UInt128, reg: uint32) =
                     let value = cast[uint64](data and 0b11111111111)
                     #echo "Set PRIM " & u128(value).toBin(11)
                     PRIM = value
-                of 0x01: RGBAQ = data
+                of 0x01: 
+                    # RGBA
+                    let r = cast[uint64]((data shr 0) and 0xFF)
+                    let g = cast[uint64]((data shr 8) and 0xFF)
+                    let b = cast[uint64]((data shr 16) and 0xFF)
+                    let a = cast[uint64]((data shr 24) and 0xFF)
+                    vertex_buffer[2][3] = r
+                    vertex_buffer[2][4] = g
+                    vertex_buffer[2][5] = b
+                    vertex_buffer[2][6] = a
+                    RGBAQ = data
                 of 0x05: 
+                    # XYZ2
                     let x = cast[uint64]((data shr 0) and 0xFFF)
                     let y = cast[uint64]((data shr 32) and 0xFFF)
-                    vertex_queue.add([x, y])
-                    if vertex_queue.len == 3:
-                        push_prim_data(0b11)
+                    vertex_buffer[2][0] = x
+                    vertex_buffer[2][1] = y
+                    vertex_kick()
+                    draw_kick()
                     XYZ2 = data
                 of 0x18: 
                     XYOFFSET_1 = data

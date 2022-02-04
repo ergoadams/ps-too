@@ -51,6 +51,14 @@ proc op_srl() =
     let temp = u128(cast[uint64](cast[int64](cast[int32](cast[uint32](gprs[rt]) shr sa))))
     gprs[rd] = temp
 
+proc op_sra() =
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    let sa = (opcode shr 6) and 0b11111
+    let temp2 = 0xFFFFFFFF'u32 shl (32 - sa)
+    let temp = u128(cast[uint64](cast[int64](cast[int32]((cast[uint32](gprs[rt]) shr sa) or temp2))))
+    gprs[rd] = temp
+
 proc op_dsrl() =
     let rt = (opcode shr 16) and 0b11111
     let rd = (opcode shr 11) and 0b11111
@@ -172,15 +180,54 @@ proc op_syscall() =
 
 proc op_sync() =
     discard
+
+proc op_dsll32() =
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    let sa = (opcode shr 6) and 0b11111
+
+    let temp = cast[uint64](gprs[rt] and u128(0xFFFFFFFFFFFFFFFF)) shl (sa + 32)
+    gprs[rd] = u128(temp)
+
+proc op_dsrl32() =
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    let sa = (opcode shr 6) and 0b11111
+
+    let temp = cast[uint64](gprs[rt] and u128(0xFFFFFFFFFFFFFFFF)) shr (sa + 32)
+    gprs[rd] = u128(temp)
+
+proc op_dsra32() =
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    let sa = (opcode shr 6) and 0b11111
+    let temp2 = 0xFFFFFFFFFFFFFFFF'u64 shl (32 - sa)
+    let temp = cast[uint64](gprs[rt] and u128(0xFFFFFFFFFFFFFFFF)) shr (sa + 32)
+    gprs[rd] = u128(temp)
+    if (temp and (1'u64 shl 63)) != 0:
+        gprs[rd] = gprs[rd] or u128(temp2)
+
+proc op_divu() =
+    let rt = (opcode shr 16) and 0b11111
+    let rs = (opcode shr 21) and 0b11111
+    lo = cast[uint64](cast[int64](cast[int32](cast[uint32](gprs[rs]) div cast[uint32](gprs[rt]))))
+    hi = cast[uint64](cast[int64](cast[int32](cast[uint32](gprs[rs]) mod cast[uint32](gprs[rt]))))
+
+proc op_mfhi() =
+    let rd = (opcode shr 11) and 0b11111
+    gprs[rd] = u128(hi)
+
+proc op_break() =
+    echo "Unhandled break"
     
-const SPECIAL_INSTRUCTION: array[64, proc] = [op_sll, op_unhandled, op_srl, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
-                                           op_jr, op_jalr, op_unhandled, op_unhandled, op_syscall, op_unhandled, op_unhandled, op_sync,
-                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
-                                           op_mult, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+const SPECIAL_INSTRUCTION: array[64, proc] = [op_sll, op_unhandled, op_srl, op_sra, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_jr, op_jalr, op_unhandled, op_unhandled, op_syscall, op_break, op_unhandled, op_sync,
+                                           op_mfhi, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_mult, op_unhandled, op_unhandled, op_divu, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_add, op_addu, op_sub, op_subu, op_and, op_or, op_unhandled, op_nor,
                                            op_unhandled, op_unhandled, op_unhandled, op_sltu, op_unhandled, op_daddu, op_unhandled, op_dsubu,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
-                                           op_dsll, op_unhandled, op_dsrl, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled]
+                                           op_dsll, op_unhandled, op_dsrl, op_unhandled, op_dsll32, op_unhandled, op_dsrl32, op_dsra32]
 
 
 proc op_bltz() =
@@ -242,9 +289,32 @@ proc op_regimm() =
     sub_op_index = (opcode shr 16) and 0b11111
     REGIMM_INSTRUCTION[sub_op_index]()
 
+proc op_w() =
+    if (opcode and 0b111111) != 0b100000:
+        echo "Invalid FPU.W opcode"
+    else:
+        echo "Unhandled CVT.s"
+
+proc op_s() =
+    echo "Unhandled FPU.S opcode " & u128(opcode and 0b111111).toBin(6)
+
+proc op_mtc1() =
+    echo "Unhandled mtc1"
+
+proc op_mfc1() =
+    echo "Unhandled mfc1"
+        
+
+const COP1_INSTRUCTION: array[32, proc] = [op_mfc1, op_unhandled, op_unhandled, op_unhandled, op_mtc1, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_s, op_unhandled, op_unhandled, op_unhandled, op_w, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled]
+
+
+
 proc op_cop1() =
     sub_op_index = (opcode shr 21) and 0b11111
-    echo "Unhandled cop1 " & int64(sub_op_index).toBin(5)
+    COP1_INSTRUCTION[sub_op_index]()
 
 proc op_blezl() =
     let offset = cast[uint32](cast[int32](cast[int16](opcode and 0xFFFF'u32)) shl 2)
@@ -254,11 +324,19 @@ proc op_blezl() =
         delayed_pc = pc + offset
         #echo "Branched to " & pc.toHex()
 
+proc op_blez() =
+    let offset = cast[uint32](cast[int32](cast[int16](opcode and 0xFFFF'u32)) shl 2)
+    let rs = (opcode shr 21) and 0b11111
+    if cast[int64](gprs[rs]) <= 0:
+        prepare_branch_delay()
+        delayed_pc = pc + offset
+
 proc op_sd() =
-    let base = (opcode shr 21) and 0b11111
-    let rt = (opcode shr 16) and 0b11111
-    let offset = cast[uint32](cast[int32](cast[int16](opcode and 0xFFFF))) + cast[uint32](gprs[base] and u128(0xFFFFFFFF))
-    store64(offset and (not 3'u32), cast[uint64](gprs[rt]))
+    {.gcsafe.}:
+        let base = (opcode shr 21) and 0b11111
+        let rt = (opcode shr 16) and 0b11111
+        let offset = cast[uint32](cast[int32](cast[int16](opcode and 0xFFFF))) + cast[uint32](gprs[base] and u128(0xFFFFFFFF))
+        store64(offset and (not 3'u32), cast[uint64](gprs[rt]))
 
 proc op_ld() =
     let base = (opcode shr 21) and 0b11111
@@ -275,6 +353,15 @@ proc op_slti() =
     let rt = (opcode shr 16) and 0b11111
     let imm = opcode and 0xFFFF
     if cast[uint64](gprs[rs]) < cast[uint64](cast[int64](cast[int16](imm))):
+        gprs[rt] = u128(1)
+    else:
+        gprs[rt] = u128(0)
+
+proc op_sltiu() =
+    let rs = (opcode shr 21) and 0b11111
+    let rt = (opcode shr 16) and 0b11111
+    let imm = opcode and 0xFFFF
+    if cast[uint64](gprs[rs]) < cast[uint64](imm):
         gprs[rt] = u128(1)
     else:
         gprs[rt] = u128(0)
@@ -335,6 +422,12 @@ proc op_ori() =
     let rt = (opcode shr 16) and 0b11111
     let imm = u128(opcode and 0xFFFF)
     gprs[rt] = gprs[rs] or imm
+
+proc op_xori() =
+    let rs = (opcode shr 21) and 0b11111
+    let rt = (opcode shr 16) and 0b11111
+    let imm = u128(opcode and 0xFFFF)
+    gprs[rt] = gprs[rs] xor imm
 
 proc op_addiu() =
     let rs = (opcode shr 21) and 0b11111
@@ -421,14 +514,37 @@ proc op_lq() =
     let offset = cast[uint32](cast[int32](cast[int16](opcode and 0xFFFF)))
     gprs[rt] = load128(cast[uint32](gprs[base]) + offset)
 
-const NORMAL_INSTRUCTION: array[64, proc] = [op_special, op_regimm, op_j, op_jal, op_beq, op_bne, op_unhandled, op_unhandled,
-                                           op_addi, op_addiu, op_slti, op_unhandled, op_andi, op_ori, op_unhandled, op_lui,
-                                           op_cop0, op_unhandled, op_unhandled, op_unhandled, op_beql, op_bnel, op_blezl, op_unhandled,
-                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_lq, op_sq,
+proc op_lwc1() =
+    echo "unhandled lwc1"
+
+proc op_swc1() =
+    echo "unhandled swc1"
+
+proc op_mult1() =
+    echo "Unhandled mult1"
+
+const MMI_INSTRUCTION: array[64, proc] = [op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_mult1, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled]
+
+
+proc op_mmi() =
+    sub_op_index = opcode and 0b11111
+    MMI_INSTRUCTION[sub_op_index]()
+
+const NORMAL_INSTRUCTION: array[64, proc] = [op_special, op_regimm, op_j, op_jal, op_beq, op_bne, op_blez, op_unhandled,
+                                           op_addi, op_addiu, op_slti, op_sltiu, op_andi, op_ori, op_xori, op_lui,
+                                           op_cop0, op_cop1, op_unhandled, op_unhandled, op_beql, op_bnel, op_blezl, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_mmi, op_unhandled, op_lq, op_sq,
                                            op_lb, op_lh, op_unhandled, op_lw, op_lbu, op_lhu, op_unhandled, op_unhandled,
                                            op_sb, op_sh, op_unhandled, op_sw, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
-                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_ld,
-                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_sd]
+                                           op_unhandled, op_lwc1, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_ld,
+                                           op_unhandled, op_swc1, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_sd]
 
 
 proc ee_tick*() =

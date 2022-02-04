@@ -282,6 +282,9 @@ proc store64*(address: uint32, value: uint64) =
         scratchpad[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         scratchpad[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         scratchpad[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
+        let temp = cast[uint32](value)
+        dmac_store32(address, temp)
     else:
         echo "unhandled store64 " & address.toHex() & " " & value.toHex()
 
@@ -377,6 +380,8 @@ proc load64*(address: uint32): uint64 =
         let offset = address - 0x1FC00000'u32
         return (cast[uint64](bios[offset + 7]) shl 56) or (cast[uint64](bios[offset + 6]) shl 48) or (cast[uint64](bios[offset + 5]) shl 40) or (cast[uint64](bios[offset + 4]) shl 32) or (cast[uint64](bios[offset + 3]) shl 24) or (cast[uint64](bios[offset + 2]) shl 16) or (cast[uint64](bios[offset + 1]) shl 8) or (cast[uint64](bios[offset + 0]) shl 0)
     elif address == 0x12001000'u32: return GS_CSR
+    elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
+        return uint64(dmac_load32(address))
     else: 
         echo "Unhandled load64 " & address.toHex()
         return 0x0f0f0f0f'u64

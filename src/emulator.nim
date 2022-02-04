@@ -4,7 +4,7 @@ import times
 var running = true
 
 let bios_location = "roms/scph39001.bin"
-let elf_location = "roms/alu.elf"
+let elf_location = "roms/pillgen2.elf"
 
 load_bios(bios_location)
 let entry_pc = load_elf(elf_location)
