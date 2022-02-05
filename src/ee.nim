@@ -154,6 +154,17 @@ proc op_sltu() =
     else:
         gprs[rd] = u128(0)
 
+proc op_slt() =
+    # TODO: FIX
+
+    let rs = (opcode shr 21) and 0b11111
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    if cast[int64](gprs[rs]) < cast[int64](gprs[rt]):
+        gprs[rd] = u128(1)
+    else:
+        gprs[rd] = u128(0)
+
 proc op_mult() =
     let rs = (opcode shr 21) and 0b11111
     let rt = (opcode shr 16) and 0b11111
@@ -213,19 +224,37 @@ proc op_divu() =
     lo = cast[uint64](cast[int64](cast[int32](cast[uint32](gprs[rs]) div cast[uint32](gprs[rt]))))
     hi = cast[uint64](cast[int64](cast[int32](cast[uint32](gprs[rs]) mod cast[uint32](gprs[rt]))))
 
+proc op_div() =
+    # TODO: FIX
+    let rt = (opcode shr 16) and 0b11111
+    let rs = (opcode shr 21) and 0b11111
+    lo = cast[uint64](cast[int64](cast[int32](cast[uint32](gprs[rs]) div cast[uint32](gprs[rt]))))
+    hi = cast[uint64](cast[int64](cast[int32](cast[uint32](gprs[rs]) mod cast[uint32](gprs[rt]))))
+
 proc op_mfhi() =
     let rd = (opcode shr 11) and 0b11111
     gprs[rd] = u128(hi)
+
+proc op_mflo() =
+    let rd = (opcode shr 11) and 0b11111
+    gprs[rd] = u128(lo)
+
+proc op_movn() =
+    let rs = (opcode shr 21) and 0b11111
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    if gprs[rt] != u128(0):
+        gprs[rd] = gprs[rs] 
 
 proc op_break() =
     echo "Unhandled break"
     
 const SPECIAL_INSTRUCTION: array[64, proc] = [op_sll, op_unhandled, op_srl, op_sra, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
-                                           op_jr, op_jalr, op_unhandled, op_unhandled, op_syscall, op_break, op_unhandled, op_sync,
-                                           op_mfhi, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
-                                           op_mult, op_unhandled, op_unhandled, op_divu, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_jr, op_jalr, op_unhandled, op_movn, op_syscall, op_break, op_unhandled, op_sync,
+                                           op_mfhi, op_unhandled, op_mflo, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_mult, op_unhandled, op_div, op_divu, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_add, op_addu, op_sub, op_subu, op_and, op_or, op_unhandled, op_nor,
-                                           op_unhandled, op_unhandled, op_unhandled, op_sltu, op_unhandled, op_daddu, op_unhandled, op_dsubu,
+                                           op_unhandled, op_unhandled, op_slt, op_sltu, op_unhandled, op_daddu, op_unhandled, op_dsubu,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_dsll, op_unhandled, op_dsrl, op_unhandled, op_dsll32, op_unhandled, op_dsrl32, op_dsra32]
 
@@ -523,10 +552,13 @@ proc op_swc1() =
 proc op_mult1() =
     echo "Unhandled mult1"
 
+proc op_div1() =
+    echo "Unhandled div1"
+
 const MMI_INSTRUCTION: array[64, proc] = [op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
-                                           op_mult1, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_mult1, op_unhandled, op_div1, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,

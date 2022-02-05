@@ -1,6 +1,6 @@
 import pkg/nint128
 import streams, strutils
-import gif, gs
+import gif, gs, timer
 
 var bios: array[0x400000 , uint8]
 var ram: array[0x2000000, uint8]
@@ -51,10 +51,13 @@ proc dma_load32(address: uint32): uint32 =
         return (cast[uint32](bios[offset + 3]) shl 24) or (cast[uint32](bios[offset + 2]) shl 16) or (cast[uint32](bios[offset + 1]) shl 8) or (cast[uint32](bios[offset + 0]) shl 0)
     else: 
         echo "Unhandled dma load32 " & address.toHex()
-        return 0x0f0f0f0f'u32
+        return 0x00'u32
 
 proc do_dma(channel: uint32) =
     # tranfers quadwords (16 bytes, 4*32bits)
+    let dma_direction = d_chcr[channel] and 0b11
+    if dma_direction != 1:
+        echo "Unhandled dma direction"
     let dma_mode = (d_chcr[channel] shr 2) and 0b11
     let tte = (d_chcr[channel] shr 6) and 1
     let tie = (d_chcr[channel] shr 7) and 1
@@ -301,6 +304,7 @@ proc store32*(address: uint32, value: uint32) =
         bios[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         bios[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         bios[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif address == 0x10000010: timer_store32(address, value)
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         dmac_store32(address, value)
     elif (address >= 0x1000E000'u32) and (address < 0x1000E060'u32):
@@ -393,6 +397,7 @@ proc load32*(address: uint32): uint32 =
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
         return (cast[uint32](bios[offset + 3]) shl 24) or (cast[uint32](bios[offset + 2]) shl 16) or (cast[uint32](bios[offset + 1]) shl 8) or (cast[uint32](bios[offset + 0]) shl 0)
+    elif address == 0x10000000'u32: return timer_load32(address)
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         return dmac_load32(address)
     elif (address >= 0x1000E000'u32) and (address < 0x1000E060'u32):
@@ -400,7 +405,7 @@ proc load32*(address: uint32): uint32 =
     elif address == 0x12001000'u32: return cast[uint32](GS_CSR)
     else: 
         echo "Unhandled load32 " & address.toHex()
-        return 0x0f0f0f0f'u32
+        return 0x00'u32
 
 proc load16*(address: uint32): uint16 =
     let address = translate_address(address)
@@ -411,7 +416,7 @@ proc load16*(address: uint32): uint16 =
         return (cast[uint16](bios[offset + 1]) shl 8) or (cast[uint16](bios[offset + 0]) shl 0)
     else: 
         echo "Unhandled load16 " & address.toHex()
-        return 0x0f'u16
+        return 0x00'u16
 
 proc load8*(address: uint32): uint8 =
     let address = translate_address(address)
@@ -422,7 +427,7 @@ proc load8*(address: uint32): uint8 =
         return bios[offset]
     else: 
         echo "Unhandled load8 " & address.toHex()
-        return 0x0f'u8
+        return 0x00'u8
 
 
 
