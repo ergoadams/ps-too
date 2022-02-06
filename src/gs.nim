@@ -18,6 +18,8 @@ vram_sprite.scale = vec2(scale_factor, scale_factor)
 
 var vertex_array = newVertexArray(PrimitiveType.Triangles)
 
+var debug* = false
+
 type
     FRAME_t = object
         fbp, fbw, format, mask: uint32
@@ -83,7 +85,7 @@ proc display_frame*() =
     updateFromPixels(vram_texture, vram[0].addr, cint(1024), cint(1024), cint(0), cint(0))
     window.clear clear_color
     window.draw(vram_sprite)
-    #window.draw(vertex_array)
+    window.draw(vertex_array)
     window.display()
     vertex_array.clear()
 
@@ -97,6 +99,14 @@ proc parse_events*() =
                 vram_texture.destroy()
                 vram_sprite.destroy()
                 quit()
+            of EventType.KeyPressed:
+                case event.key.code:
+                    of KeyCode.D: debug = true
+                    else: discard
+            of EventType.KeyReleased:
+                case event.key.code:
+                    of KeyCode.D: debug = false
+                    else: discard
             else: discard
 
 var CLAMP_2: uint64
@@ -124,9 +134,9 @@ proc vertex_kick() =
 
 proc draw_kick() =
     if cur_vertex_buffer_size >= 3:
-        vertex_array.append vertex(vec2(cfloat((vertex_buffer[0].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[0].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[0].r), uint8(vertex_buffer[0].g), uint8(vertex_buffer[0].b)))
-        vertex_array.append vertex(vec2(cfloat((vertex_buffer[1].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[1].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[1].r), uint8(vertex_buffer[1].g), uint8(vertex_buffer[1].b)))
         vertex_array.append vertex(vec2(cfloat((vertex_buffer[2].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[2].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[2].r), uint8(vertex_buffer[2].g), uint8(vertex_buffer[2].b)))
+        vertex_array.append vertex(vec2(cfloat((vertex_buffer[1].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[1].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[1].r), uint8(vertex_buffer[1].g), uint8(vertex_buffer[1].b)))
+        vertex_array.append vertex(vec2(cfloat((vertex_buffer[0].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[0].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[0].r), uint8(vertex_buffer[0].g), uint8(vertex_buffer[0].b)))
         cur_vertex_buffer_size = 2
 
 proc write_hwreg(data: uint64) =
@@ -134,15 +144,15 @@ proc write_hwreg(data: uint64) =
         of 0x00: # RGBA32, each color is 8 bits, data contains 2 pixels
             let pixel1 = cast[uint32](data)
             let pixel2 = cast[uint32](data shr 32)
-            let r1 = cast[uint8]((pixel1 shr 24) and 0xFF)
-            let g1 = cast[uint8]((pixel1 shr 16) and 0xFF)
-            let b1 = cast[uint8]((pixel1 shr 8) and 0xFF)
-            let a1 = cast[uint8]((pixel1 shr 0) and 0xFF)
+            let a1 = cast[uint8]((pixel1 shr 24) and 0xFF)
+            let b1 = cast[uint8]((pixel1 shr 16) and 0xFF)
+            let g1 = cast[uint8]((pixel1 shr 8) and 0xFF)
+            let r1 = cast[uint8]((pixel1 shr 0) and 0xFF)
 
-            let r2 = cast[uint8]((pixel2 shr 24) and 0xFF)
-            let g2 = cast[uint8]((pixel2 shr 16) and 0xFF)
-            let b2 = cast[uint8]((pixel2 shr 8) and 0xFF)
-            let a2 = cast[uint8]((pixel2 shr 0) and 0xFF)
+            let a2 = cast[uint8]((pixel2 shr 24) and 0xFF)
+            let b2 = cast[uint8]((pixel2 shr 16) and 0xFF)
+            let g2 = cast[uint8]((pixel2 shr 8) and 0xFF)
+            let r2 = cast[uint8]((pixel2 shr 0) and 0xFF)
 
 
             var page_num = (cur_transfer_x shr 6) + ((FRAME_1.fbw shr 6)*(cur_transfer_y shr 5))
@@ -153,12 +163,12 @@ proc write_hwreg(data: uint64) =
                 vram[offset + 0] = r1
                 vram[offset + 1] = g1
                 vram[offset + 2] = b1
-                vram[offset + 3] = a1
+                vram[offset + 3] = 255
 
                 vram[offset + 4] = r2
                 vram[offset + 5] = g2
                 vram[offset + 6] = b2
-                vram[offset + 7] = a2
+                vram[offset + 7] = 255
 
             cur_transfer_x += 2
             if (cur_transfer_x - TRXPOS.x_dest) >= TRXREG.width:

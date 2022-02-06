@@ -1,29 +1,26 @@
 import pkg/nint128
 import streams, strutils
-import gif, gs, timer
+import gif, gs, timer, cop0
+
+type
+    Channel_t = object
+        chcr, madr, tadr, qwc, asr0, asr1, sadr : uint32
+    DMAC_t = object
+        ctrl, stat, pcr, sqwc, rbsr, rbor, enabler, enablew: uint32
 
 var bios: array[0x400000 , uint8]
 var ram: array[0x2000000, uint8]
-var scratchpad: array[0x1000000, uint8]
+var scratchpad: array[0x4000, uint8]
+var iop_ram: array[0x200000, uint8]
+var d_channels: array[10, Channel_t]
+var DMAC = DMAC_t(enabler: 0x1201'u32)
+var MCH_DRD: uint32
+var MCH_RICM: uint32
+var rdram_sdevid: uint32
 
-var d_ctrl: uint32
-var d_stat: uint32
-var d_pcr: uint32
-var d_sqwc: uint32
-var d_rbsr: uint32
-var d_rbor: uint32
-var d_enabler: uint32
-var d_enablew: uint32
+var weird_values: array[0x100, uint8]
 
-var d_chcr: array[10, uint32]
-var d_madr: array[10, uint32]
-var d_tadr: array[10, uint32]
-var d_qwc: array[10, uint32]
-var d_asr0: array[10, uint32]
-var d_asr1: array[10, uint32]
-var d_sadr: array[10, uint32]
-
-d_enabler = 0x1201'u32
+proc load32*(address: uint32): uint32 {.gcsafe, locks: 0.}
 
 proc translate_address(address: uint32): uint32 = 
     if (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
@@ -40,37 +37,26 @@ proc load_bios*(bios_location: string) =
 
     echo "Loaded bios from " & bios_location
 
-
-
-proc dma_load32(address: uint32): uint32 =
-    let address = translate_address(address)
-    if (address >= 0x00000000'u32) and (address < 0x00000000'u32 + 0x2000000):
-        return (cast[uint32](ram[address + 3]) shl 24) or (cast[uint32](ram[address + 2]) shl 16) or (cast[uint32](ram[address + 1]) shl 8) or (cast[uint32](ram[address + 0]) shl 0)
-    elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
-        let offset = address - 0x1FC00000'u32
-        return (cast[uint32](bios[offset + 3]) shl 24) or (cast[uint32](bios[offset + 2]) shl 16) or (cast[uint32](bios[offset + 1]) shl 8) or (cast[uint32](bios[offset + 0]) shl 0)
-    else: 
-        echo "Unhandled dma load32 " & address.toHex()
-        return 0x00'u32
-
 proc do_dma(channel: uint32) =
     # tranfers quadwords (16 bytes, 4*32bits)
-    let dma_direction = d_chcr[channel] and 0b11
+    let cur_channel = d_channels[channel]
+    let dma_direction = cur_channel.chcr and 0b11
     if dma_direction != 1:
         echo "Unhandled dma direction"
-    let dma_mode = (d_chcr[channel] shr 2) and 0b11
-    let tte = (d_chcr[channel] shr 6) and 1
-    let tie = (d_chcr[channel] shr 7) and 1
-    var quadword_count = d_qwc[channel] and 0xFFFF
+    let dma_mode = (cur_channel.chcr shr 2) and 0b11
+    let tte = (cur_channel.chcr shr 6) and 1
+    let tie = (cur_channel.chcr shr 7) and 1
+    var quadword_count = cur_channel.qwc and 0xFFFF
+
     if dma_mode == 0:
         if channel == 2:
             var i = 0'u32
             while i < (quadword_count):
-                gif_dma((u128(dma_load32(d_madr[channel] + 12)) shl 96) or 
-                        (u128(dma_load32(d_madr[channel] + 8)) shl 64) or 
-                        (u128(dma_load32(d_madr[channel] + 4)) shl 32) or 
-                        (u128(dma_load32(d_madr[channel] + 0)) shl 0))
-                d_madr[channel] += 16
+                gif_dma((u128(load32(d_channels[channel].madr + 12)) shl 96) or 
+                        (u128(load32(d_channels[channel].madr + 8)) shl 64) or 
+                        (u128(load32(d_channels[channel].madr + 4)) shl 32) or 
+                        (u128(load32(d_channels[channel].madr + 0)) shl 0))
+                d_channels[channel].madr += 16
                 i += 1
             gif_parse_packet()
         else:
@@ -83,22 +69,22 @@ proc do_dma(channel: uint32) =
         var tag_end = false
         while dma_running:
             if quadword_count == 0:
-                let dmatag1 = dma_load32(d_tadr[channel]+0)
-                let dmatag2 = dma_load32(d_tadr[channel]+4)
-                let dmatag3 = dma_load32(d_tadr[channel]+8)
-                let dmatag4 = dma_load32(d_tadr[channel]+12)
+                let dmatag1 = load32(d_channels[channel].tadr + 0)
+                let dmatag2 = load32(d_channels[channel].tadr + 4)
+                let dmatag3 = load32(d_channels[channel].tadr + 8)
+                let dmatag4 = load32(d_channels[channel].tadr + 12)
                 quadword_count = dmatag1 and 0xFFFF
-                d_qwc[channel] = quadword_count
+                d_channels[channel].qwc = quadword_count
                 tagid = (dmatag1 shr 28) and 0b111
                 let new_addr = dmatag2
                 if tagid == 0:
-                    d_madr[channel] = new_addr
-                    d_tadr[channel] += 16
+                    d_channels[channel].madr = new_addr
+                    d_channels[channel].tadr += 16
                     tag_end = true
                     if quadword_count == 0:
                         dma_running = false
                 elif tagid == 1:
-                    d_madr[channel] = d_tadr[channel] + 16
+                    d_channels[channel].madr = d_channels[channel].tadr + 16
                 else:
                     echo "Unhandled dmatag id " & $tagid
                     dma_running = false        
@@ -106,13 +92,16 @@ proc do_dma(channel: uint32) =
                 if channel == 2:
                     var i = 0'u32
                     while i < quadword_count:
-                        gif_dma((u128(dma_load32(d_madr[channel] + 12)) shl 96) or (u128(dma_load32(d_madr[channel] + 8)) shl 64) or (u128(dma_load32(d_madr[channel] + 4)) shl 32) or (u128(dma_load32(d_madr[channel] + 0)) shl 0))
-                        d_madr[channel] += 16
+                        gif_dma((u128(load32(d_channels[channel].madr + 12)) shl 96) or 
+                                (u128(load32(d_channels[channel].madr + 8)) shl 64) or 
+                                (u128(load32(d_channels[channel].madr + 4)) shl 32) or 
+                                (u128(load32(d_channels[channel].madr + 0)) shl 0))
+                        d_channels[channel].madr += 16
                         i += 1
                     gif_parse_packet()
                     quadword_count = 0
                     if tagid == 1:
-                        d_tadr[channel] = d_madr[channel]
+                        d_channels[channel].tadr = d_channels[channel].madr
 
                     if tag_end:
                         dma_running = false
@@ -126,12 +115,12 @@ proc do_dma(channel: uint32) =
         echo "Unhandled dma mode " & $dma_mode
 
 proc dmac_load32(address: uint32): uint32 = 
-    if address == 0x1000E000'u32:   return d_ctrl
-    elif address == 0x1000E010'u32: return d_stat
-    elif address == 0x1000E020'u32: return d_pcr
-    elif address == 0x1000E030'u32: return d_sqwc
-    elif address == 0x1000E040'u32: return d_rbsr
-    elif address == 0x1000E050'u32: return d_rbor
+    if address == 0x1000E000'u32:   return DMAC.ctrl
+    elif address == 0x1000E010'u32: return DMAC.stat
+    elif address == 0x1000E020'u32: return DMAC.pcr
+    elif address == 0x1000E030'u32: return DMAC.sqwc
+    elif address == 0x1000E040'u32: return DMAC.rbsr
+    elif address == 0x1000E050'u32: return DMAC.rbor
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         var channel = (address shr 12) and 0xF - 0x8
         if channel == 3 or channel == 8:
@@ -143,13 +132,13 @@ proc dmac_load32(address: uint32): uint32 =
             elif ((address shr 8) and 0xF) == 0x8:
                 channel += 2
         case address and 0xFF:
-            of 0x00: return d_chcr[channel]
-            of 0x10: return d_madr[channel]
-            of 0x20: return d_qwc[channel]
-            of 0x30: return d_tadr[channel]
-            of 0x40: return d_asr0[channel]
-            of 0x50: return d_asr1[channel]
-            of 0x80: return d_sadr[channel]
+            of 0x00: return d_channels[channel].chcr
+            of 0x10: return d_channels[channel].madr
+            of 0x20: return d_channels[channel].qwc
+            of 0x30: return d_channels[channel].tadr
+            of 0x40: return d_channels[channel].asr0
+            of 0x50: return d_channels[channel].asr1
+            of 0x80: return d_channels[channel].sadr
             else: 
                 echo "Unhandled dma reg " & (address and 0xFF).toHex()
                 return 0x00'u32
@@ -158,12 +147,12 @@ proc dmac_load32(address: uint32): uint32 =
         return 0x00'u32
 
 proc dmac_store32(address: uint32, value: uint32) = 
-    if address == 0x1000E000'u32:   d_ctrl = value
-    elif address == 0x1000E010'u32: d_stat = value
-    elif address == 0x1000E020'u32: d_pcr = value
-    elif address == 0x1000E030'u32: d_sqwc = value
-    elif address == 0x1000E040'u32: d_rbsr = value
-    elif address == 0x1000E050'u32: d_rbor = value
+    if address == 0x1000E000'u32:   DMAC.ctrl = value
+    elif address == 0x1000E010'u32: DMAC.stat = value
+    elif address == 0x1000E020'u32: DMAC.pcr = value
+    elif address == 0x1000E030'u32: DMAC.sqwc = value
+    elif address == 0x1000E040'u32: DMAC.rbsr = value
+    elif address == 0x1000E050'u32: DMAC.rbor = value
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         var channel = (address shr 12) and 0xF - 0x8
         if channel == 3 or channel == 8:
@@ -177,16 +166,16 @@ proc dmac_store32(address: uint32, value: uint32) =
         case address and 0xFF:
             of 0x00: 
                 #echo "Set channel " & $channel & " control to " & value.toHex()
-                d_chcr[channel] = value
+                d_channels[channel].chcr = value
                 if (value and 0x100) != 0:
                     do_dma(channel)
-                d_chcr[channel] = value and (not 0x100'u32)
-            of 0x10: d_madr[channel] = value
-            of 0x20: d_qwc[channel] = value
-            of 0x30: d_tadr[channel] = value
-            of 0x40: d_asr0[channel] = value
-            of 0x50: d_asr1[channel] = value
-            of 0x80: d_sadr[channel] = value
+                d_channels[channel].chcr = value and (not 0x100'u32)
+            of 0x10: d_channels[channel].madr = value
+            of 0x20: d_channels[channel].qwc = value
+            of 0x30: d_channels[channel].tadr = value
+            of 0x40: d_channels[channel].asr0 = value
+            of 0x50: d_channels[channel].asr1 = value
+            of 0x80: d_channels[channel].sadr = value
             else: echo "Unhandled dma reg store " & (address and 0xFF).toHex()
     else:
         echo "Unhandled dmac store32 " & address.toHex() & " " & value.toHex()
@@ -231,7 +220,7 @@ proc store128*(address: uint32, value: UInt128) =
         bios[offset + 1] = cast[uint8]((value shr 8) and u128(0xFF))
         bios[offset + 0] = cast[uint8]((value shr 0) and u128(0xFF))
     elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
-        let offset = address - 0x70000000'u32
+        let offset = (address - 0x70000000'u32) and 0x3FFF
         scratchpad[offset + 15] = cast[uint8]((value shr 120) and u128(0xFF))
         scratchpad[offset + 14] = cast[uint8]((value shr 112) and u128(0xFF))
         scratchpad[offset + 13] = cast[uint8]((value shr 104) and u128(0xFF))
@@ -276,7 +265,7 @@ proc store64*(address: uint32, value: uint64) =
     elif address == 0x12001000'u32: 
         GS_CSR = value or 0b1000
     elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
-        let offset = address - 0x70000000'u32
+        let offset = (address - 0x70000000'u32) and 0x3FFF
         scratchpad[offset + 7] = cast[uint8]((value shr 56) and 0xFF)
         scratchpad[offset + 6] = cast[uint8]((value shr 48) and 0xFF)
         scratchpad[offset + 5] = cast[uint8]((value shr 40) and 0xFF)
@@ -285,6 +274,8 @@ proc store64*(address: uint32, value: uint64) =
         scratchpad[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         scratchpad[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         scratchpad[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif address == 0x10000810: timer_store(address, cast[uint32](value))
+    elif address == 0x10000800: timer_store(address, cast[uint32](value))
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         let temp = cast[uint32](value)
         dmac_store32(address, temp)
@@ -304,14 +295,34 @@ proc store32*(address: uint32, value: uint32) =
         bios[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         bios[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         bios[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
-    elif address == 0x10000010: timer_store32(address, value)
+    elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
+        let offset = (address - 0x70000000'u32) and 0x3FFF
+        scratchpad[offset + 3] = cast[uint8]((value shr 24) and 0xFF)
+        scratchpad[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
+        scratchpad[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
+        scratchpad[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif address == 0x10000010: timer_store(address, value)
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         dmac_store32(address, value)
     elif (address >= 0x1000E000'u32) and (address < 0x1000E060'u32):
         dmac_store32(address, value)
     elif address == 0x12001000'u32: GS_CSR = cast[uint64](value)
+    elif address == 0x1000F430:
+        let sa = cast[uint8]((value shr 16) and 0xFFF)
+        let sbc = cast[uint8]((value shr 6) and 0xF)
+        if (sa == 0x21) and (sbc == 0x1) and (((MCH_DRD shr 7) and 1) == 0):
+            rdram_sdevid = 0
+        MCH_RICM = value and (not 0x80000000'u32)
+    elif address == 0x1000F440: MCH_DRD = value
+    elif (address >= 0x1000F400'u32) and (address < 0x1000F500'u32):
+        let offset = address - 0x1000F400'u32
+        weird_values[offset + 3] = cast[uint8]((value shr 24) and 0xFF)
+        weird_values[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
+        weird_values[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
+        weird_values[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
     else:
-        echo "unhandled store32 " & address.toHex() & " " & value.toHex()
+        discard
+        #echo "unhandled store32 " & address.toHex() & " " & value.toHex()
 
 proc store16*(address: uint32, value: uint16) =
     let address = translate_address(address)
@@ -322,6 +333,10 @@ proc store16*(address: uint32, value: uint16) =
         let offset = address - 0x1FC00000'u32
         bios[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         bios[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
+        let offset = (address - 0x70000000'u32) and 0x3FFF
+        scratchpad[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
+        scratchpad[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
     else:
         echo "unhandled store16 " & address.toHex() & " " & value.toHex()
 
@@ -332,6 +347,11 @@ proc store8*(address: uint32, value: uint8) =
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
         bios[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
+        let offset = (address - 0x70000000'u32) and 0x3FFF
+        scratchpad[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif address == 0x1000F180:
+        stdout.write char(value)
     else:
         echo "unhandled store8 " & address.toHex() & " " & value.toHex()
 
@@ -379,44 +399,119 @@ proc load128*(address: uint32): UInt128 =
 proc load64*(address: uint32): uint64 =
     let address = translate_address(address)
     if (address >= 0x00000000'u32) and (address < 0x00000000'u32 + 0x2000000):
-        return (cast[uint64](ram[address + 7]) shl 56) or (cast[uint64](ram[address + 6]) shl 48) or (cast[uint64](ram[address + 5]) shl 40) or (cast[uint64](ram[address + 4]) shl 32) or (cast[uint64](ram[address + 3]) shl 24) or (cast[uint64](ram[address + 2]) shl 16) or (cast[uint64](ram[address + 1]) shl 8) or (cast[uint64](ram[address + 0]) shl 0)
+        return  (cast[uint64](ram[address + 7]) shl 56) or 
+                (cast[uint64](ram[address + 6]) shl 48) or 
+                (cast[uint64](ram[address + 5]) shl 40) or 
+                (cast[uint64](ram[address + 4]) shl 32) or 
+                (cast[uint64](ram[address + 3]) shl 24) or 
+                (cast[uint64](ram[address + 2]) shl 16) or 
+                (cast[uint64](ram[address + 1]) shl 8) or 
+                (cast[uint64](ram[address + 0]) shl 0)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
-        return (cast[uint64](bios[offset + 7]) shl 56) or (cast[uint64](bios[offset + 6]) shl 48) or (cast[uint64](bios[offset + 5]) shl 40) or (cast[uint64](bios[offset + 4]) shl 32) or (cast[uint64](bios[offset + 3]) shl 24) or (cast[uint64](bios[offset + 2]) shl 16) or (cast[uint64](bios[offset + 1]) shl 8) or (cast[uint64](bios[offset + 0]) shl 0)
+        return  (cast[uint64](bios[offset + 7]) shl 56) or 
+                (cast[uint64](bios[offset + 6]) shl 48) or 
+                (cast[uint64](bios[offset + 5]) shl 40) or 
+                (cast[uint64](bios[offset + 4]) shl 32) or 
+                (cast[uint64](bios[offset + 3]) shl 24) or 
+                (cast[uint64](bios[offset + 2]) shl 16) or 
+                (cast[uint64](bios[offset + 1]) shl 8) or 
+                (cast[uint64](bios[offset + 0]) shl 0)
+    elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
+        let offset = (address - 0x70000000'u32) and 0x3FFF
+        return  (cast[uint64](scratchpad[offset + 7]) shl 56) or 
+                (cast[uint64](scratchpad[offset + 6]) shl 48) or 
+                (cast[uint64](scratchpad[offset + 5]) shl 40) or 
+                (cast[uint64](scratchpad[offset + 4]) shl 32) or 
+                (cast[uint64](scratchpad[offset + 3]) shl 24) or 
+                (cast[uint64](scratchpad[offset + 2]) shl 16) or 
+                (cast[uint64](scratchpad[offset + 1]) shl 8) or 
+                (cast[uint64](scratchpad[offset + 0]) shl 0)
     elif address == 0x12001000'u32: return GS_CSR
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         return uint64(dmac_load32(address))
     else: 
-        echo "Unhandled load64 " & address.toHex()
-        return 0x0f0f0f0f'u64
+        quit("Unhandled load64 " & address.toHex(), 0)
 
 proc load32*(address: uint32): uint32 =
     let address = translate_address(address)
     if (address >= 0x00000000'u32) and (address < 0x00000000'u32 + 0x2000000):
-        return (cast[uint32](ram[address + 3]) shl 24) or (cast[uint32](ram[address + 2]) shl 16) or (cast[uint32](ram[address + 1]) shl 8) or (cast[uint32](ram[address + 0]) shl 0)
+        return  (cast[uint32](ram[address + 3]) shl 24) or 
+                (cast[uint32](ram[address + 2]) shl 16) or 
+                (cast[uint32](ram[address + 1]) shl 8) or 
+                (cast[uint32](ram[address + 0]) shl 0)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
-        return (cast[uint32](bios[offset + 3]) shl 24) or (cast[uint32](bios[offset + 2]) shl 16) or (cast[uint32](bios[offset + 1]) shl 8) or (cast[uint32](bios[offset + 0]) shl 0)
-    elif address == 0x10000000'u32: return timer_load32(address)
+        return  (cast[uint32](bios[offset + 3]) shl 24) or 
+                (cast[uint32](bios[offset + 2]) shl 16) or 
+                (cast[uint32](bios[offset + 1]) shl 8) or 
+                (cast[uint32](bios[offset + 0]) shl 0)
+    elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
+        let offset = (address - 0x70000000'u32) and 0x3FFF
+        return  (cast[uint32](scratchpad[offset + 3]) shl 24) or 
+                (cast[uint32](scratchpad[offset + 2]) shl 16) or 
+                (cast[uint32](scratchpad[offset + 1]) shl 8) or 
+                (cast[uint32](scratchpad[offset + 0]) shl 0)
+    elif address == 0x10000000'u32: return timer_load(address)
+    elif address == 0x1000F010'u32: return get_intc_mask()
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         return dmac_load32(address)
     elif (address >= 0x1000E000'u32) and (address < 0x1000E060'u32):
         return dmac_load32(address)
+    elif address == 0x1000F520: return DMAC.enabler
     elif address == 0x12001000'u32: return cast[uint32](GS_CSR)
+    elif address == 0x1000F130'u32: return 0x00 # Unknown
+    #elif address == 0x1000F400'u32: return 0x00 # Unknown
+    #elif address == 0x1000F410'u32: return 0x00 # Unknown
+    elif address == 0x1000F430: return 0x00 # MCH_DRD 
+    elif address == 0x1000F440: 
+        let sop = cast[uint8]((MCH_RICM shr 6) and 0xF)
+        let sa = cast[uint8]((MCH_RICM shr 16) and 0xFFF)
+        if sop == 0:
+            case sa:
+                of 0x21:
+                    if rdram_sdevid < 2:
+                        rdram_sdevid += 1
+                        return 0x1F
+                    return 0x00
+                of 0x23: return 0x0D0D
+                of 0x24: return 0x0090
+                of 0x40: return MCH_RICM and 0x1F
+                else: echo "Unhandled rdram SA"
+        return 0x00
+    elif address == 0x1000F410'u32: return 0'u32
+    elif (address >= 0x1000F400'u32) and (address < 0x1000F500'u32):
+        let offset = address - 0x1000F400'u32
+        return  (cast[uint32](weird_values[offset + 3]) shl 24) or 
+                (cast[uint32](weird_values[offset + 2]) shl 16) or 
+                (cast[uint32](weird_values[offset + 1]) shl 8) or 
+                (cast[uint32](weird_values[offset + 0]) shl 0)
+    elif (address >= 0x1C000000'u32) and (address < 0x1C000000'u32 + 0x200000):
+        quit("Trying to access IOP", 0)
+        let offset = address - 0x1C000000'u32
+        return  (cast[uint32](iop_ram[offset + 3]) shl 24) or 
+                (cast[uint32](iop_ram[offset + 2]) shl 16) or 
+                (cast[uint32](iop_ram[offset + 1]) shl 8) or 
+                (cast[uint32](iop_ram[offset + 0]) shl 0)
     else: 
         echo "Unhandled load32 " & address.toHex()
-        return 0x00'u32
+        #quit("Unhandled load32 " & address.toHex(), 0)
 
 proc load16*(address: uint32): uint16 =
     let address = translate_address(address)
     if (address >= 0x00000000'u32) and (address < 0x00000000'u32 + 0x2000000):
-        return (cast[uint16](ram[address + 1]) shl 8) or (cast[uint16](ram[address + 0]) shl 0)
+        return  (cast[uint16](ram[address + 1]) shl 8) or 
+                (cast[uint16](ram[address + 0]) shl 0)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
-        return (cast[uint16](bios[offset + 1]) shl 8) or (cast[uint16](bios[offset + 0]) shl 0)
+        return  (cast[uint16](bios[offset + 1]) shl 8) or 
+                (cast[uint16](bios[offset + 0]) shl 0)
+    elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
+        let offset = (address - 0x70000000'u32) and 0x3FFF
+        return  (cast[uint16](scratchpad[offset + 1]) shl 8) or 
+                (cast[uint16](scratchpad[offset + 0]) shl 0)
     else: 
-        echo "Unhandled load16 " & address.toHex()
-        return 0x00'u16
+        quit("Unhandled load16 " & address.toHex(), 0)
 
 proc load8*(address: uint32): uint8 =
     let address = translate_address(address)
@@ -425,13 +520,16 @@ proc load8*(address: uint32): uint8 =
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
         return bios[offset]
+    elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
+        let offset = (address - 0x70000000'u32) and 0x3FFF
+        return scratchpad[offset]
+    elif address == 0x1F803204'u32: return 0
     else: 
-        echo "Unhandled load8 " & address.toHex()
-        return 0x00'u8
-
+        quit("Unhandled load8 " & address.toHex(), 0)
 
 
 proc load_elf*(elf_location: string): uint32 =
+    echo ""
     var s = newFileStream(elf_location, fmRead)
     var elf: seq[uint8]
     while not s.atEnd:
@@ -498,4 +596,5 @@ proc load_elf*(elf_location: string): uint32 =
 
 
     echo "Loaded elf " & elf_location
+    echo ""
     return e_entry

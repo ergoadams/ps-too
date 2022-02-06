@@ -3,13 +3,11 @@ import times
 
 var running = true
 
-let bios_location = "roms/scph39001.bin"
+let bios_location = "roms/scph10000.bin"
 let elf_location = "roms/3stars.elf"
 
 load_bios(bios_location)
-#let entry_pc = load_elf(elf_location)
-#set_pc(entry_pc)
-
+set_elf(elf_location, true)
 var prev_time = cpuTime()
 
 while running:
