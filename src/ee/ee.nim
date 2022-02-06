@@ -1,5 +1,5 @@
-import strutils, pkg/nint128
-import bus, cop0, gs, timer
+import strutils, pkg/nint128, streams
+import ee_bus, cop0, gs, timer
 
 var pc: uint32 = 0xBFC00000'u32
 var opcode: uint32
@@ -7,6 +7,8 @@ var execute_delay = false
 var delayed_pc: uint32
 
 var gprs: array[32, UInt128]
+var fprs: array[32, uint32]
+var fcr0, fcr31: uint32
 var hi: uint64
 var lo: uint64
 var hi1: uint64
@@ -16,6 +18,7 @@ var sub_op_index: uint32
 
 var elf_load_path: string
 var should_load_elf: bool
+var should_dump = false
 
 type
     Exception = enum
@@ -25,7 +28,8 @@ type
         SysCall = 0x8,
         Break = 0x9,
         CoprocessorError = 0xB,
-        Overflow = 0xC
+        Overflow = 0xC,
+        Trap = 0xD
 
 proc exception(exception: Exception) =
     echo "Got exception " & $exception
@@ -100,6 +104,17 @@ proc op_sra() =
     let temp2 = u128(0xFFFFFFFF'u32 shl (32 - sa))
     let is_sign = (cast[uint32](gprs[rt]) shr 31) != 0
     var temp = u128(cast[uint64](cast[int64](cast[int32]((cast[uint32](gprs[rt]) shr sa)))))
+    if is_sign:
+        temp = temp or temp2
+    gprs[rd] = temp
+
+proc op_srav() =
+    let rs = (opcode shr 21) and 0b11111
+    let rt = (opcode shr 16) and 0b11111
+    let rd = (opcode shr 11) and 0b11111
+    let temp2 = u128(0xFFFFFFFF'u32 shl (32 - (cast[uint32](gprs[rs]) and 0b11111)))
+    let is_sign = (cast[uint32](gprs[rt]) shr 31) != 0
+    var temp = u128(cast[uint64](cast[int64](cast[int32]((cast[uint32](gprs[rt]) shr (cast[uint32](gprs[rs]) and 0b11111))))))
     if is_sign:
         temp = temp or temp2
     gprs[rd] = temp
@@ -323,13 +338,20 @@ proc op_dsllv() =
     let temp = cast[uint64](gprs[rt] and u128(0xFFFFFFFFFFFFFFFF)) shl cast[uint64](gprs[rs] and u128(0b111111))
     gprs[rd] = u128(temp)
 
-const SPECIAL_INSTRUCTION: array[64, proc] = [op_sll, op_unhandled, op_srl, op_sra, op_sllv, op_unhandled, op_unhandled, op_unhandled,
+proc op_tge() =
+    let rs = (opcode shr 21) and 0b11111
+    let rt = (opcode shr 16) and 0b11111
+    if cast[int64](gprs[rs]) > cast[int64](gprs[rt]):
+        echo "Should trap, oops"
+        #exception(Exception.Trap)
+
+const SPECIAL_INSTRUCTION: array[64, proc] = [op_sll, op_unhandled, op_srl, op_sra, op_sllv, op_unhandled, op_unhandled, op_srav,
                                            op_jr, op_jalr, op_movz, op_movn, op_syscall, op_break, op_unhandled, op_sync,
                                            op_mfhi, op_unhandled, op_mflo, op_unhandled, op_dsllv, op_unhandled, op_unhandled, op_dsrav,
                                            op_mult, op_unhandled, op_div, op_divu, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_add, op_addu, op_sub, op_subu, op_and, op_or, op_unhandled, op_nor,
                                            op_unhandled, op_unhandled, op_slt, op_sltu, op_unhandled, op_daddu, op_unhandled, op_dsubu,
-                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_tge, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_dsll, op_unhandled, op_dsrl, op_unhandled, op_dsll32, op_unhandled, op_dsrl32, op_dsra32]
 
 
@@ -401,17 +423,32 @@ proc op_w() =
     else:
         echo "Unhandled CVT.s"
 
+proc op_adda_s() =
+    echo "Unhandled adda.s"
+
 proc op_s() =
-    echo "Unhandled FPU.S opcode " & u128(opcode and 0b111111).toBin(6)
+    case opcode and 0b111111:
+        of 0b011000: op_adda_s()
+        else:
+            echo "Unhandled FPU.S opcode " & u128(opcode and 0b111111).toBin(6)
 
 proc op_mtc1() =
-    echo "Unhandled mtc1"
+    let rt = (opcode shr 16) and 0b11111
+    let fs = (opcode shr 11) and 0b11111
+    fprs[fs] = cast[uint32](gprs[rt])
 
 proc op_mfc1() =
     echo "Unhandled mfc1"
         
+proc op_ctc1() =
+    let rt = (opcode shr 16) and 0b11111
+    let fs = (opcode shr 11) and 0b11111
+    if fs == 31:
+        fcr31 = cast[uint32](gprs[rt])
+    else:
+        echo "Unhandled ctc1 " & $fs
 
-const COP1_INSTRUCTION: array[32, proc] = [op_mfc1, op_unhandled, op_unhandled, op_unhandled, op_mtc1, op_unhandled, op_unhandled, op_unhandled,
+const COP1_INSTRUCTION: array[32, proc] = [op_mfc1, op_unhandled, op_unhandled, op_unhandled, op_mtc1, op_unhandled, op_ctc1, op_unhandled,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
                                            op_s, op_unhandled, op_unhandled, op_unhandled, op_w, op_unhandled, op_unhandled, op_unhandled,
                                            op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled]
@@ -421,6 +458,59 @@ const COP1_INSTRUCTION: array[32, proc] = [op_mfc1, op_unhandled, op_unhandled, 
 proc op_cop1() =
     sub_op_index = (opcode shr 21) and 0b11111
     COP1_INSTRUCTION[sub_op_index]()
+
+proc op_cfc2() =
+    let rt = (opcode shr 16) and 0b11111
+
+proc op_ctc2() =
+    let rt = (opcode shr 16) and 0b11111
+
+proc op_viswr() =
+    discard
+
+proc op_vsqi() =
+    discard
+
+proc op_special2() =
+    sub_op_index = (opcode and 0b11) or (((opcode shr 6) and 0b11111) shl 2)
+    case sub_op_index:
+        of 0b0110101: op_vsqi()
+        of 0b0111111: op_viswr()
+        else:
+            echo "Unhandled special2 " & u128(sub_op_index).toBin(7)
+
+proc op_vsub() =
+    discard
+
+proc op_viadd() =
+    discard
+
+proc op_special1() =
+    sub_op_index = opcode and 0b111111
+    case sub_op_index:
+        of 0b101100: op_vsub()
+        of 0b110000: op_viadd()
+        of 0b111100: op_special2()
+        of 0b111101: op_special2()
+        of 0b111110: op_special2()
+        of 0b111111: op_special2()
+        else:
+            echo "Unhandled special1 " & u128(sub_op_index).toBin(6)
+
+proc op_qmfc2() =
+    discard
+
+proc op_qmtc2() =
+    discard
+
+const COP2_INSTRUCTION: array[32, proc] = [op_unhandled, op_qmfc2, op_cfc2, op_unhandled, op_unhandled, op_qmtc2, op_ctc2, op_unhandled,
+                                           op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled,
+                                           op_special1, op_special1, op_special1, op_special1, op_special1, op_special1, op_special1, op_special1,
+                                           op_special1, op_special1, op_special1, op_special1, op_special1, op_special1, op_special1, op_special1]
+
+proc op_cop2() =
+    sub_op_index = (opcode shr 21) and 0b11111
+    COP2_INSTRUCTION[sub_op_index]()
 
 proc op_blezl() =
     let offset = cast[uint32](cast[int32](cast[int16](opcode and 0xFFFF'u32)) shl 2)
@@ -638,12 +728,12 @@ proc op_lq() =
 proc op_lwc1() =
     echo "unhandled lwc1"
 
-proc op_swc1() =
-    let base = (opcode shr 21) and 0b11111
-    let ft = (opcode shr 16) and 0b11111
-    let offset = cast[uint32](cast[int16](opcode and 0xFFFF))
-
-    echo "unhandled swc1"
+proc op_swc1() = 
+    {.gcsafe.}:
+        let base = (opcode shr 21) and 0b11111
+        let ft = (opcode shr 16) and 0b11111
+        let offset = cast[uint32](cast[int16](opcode and 0xFFFF))
+        store32(cast[uint32](gprs[base]) + offset, fprs[ft])
 
 proc op_mult1() =
     let rs = (opcode shr 21) and 0b11111
@@ -655,7 +745,22 @@ proc op_mult1() =
     hi1 = cast[uint64](cast[int64](cast[int32](result shr 32)))
 
 proc op_div1() =
-    echo "Unhandled div1"
+    let rt = (opcode shr 16) and 0b11111
+    let rs = (opcode shr 21) and 0b11111
+    let reg1 = cast[int32](gprs[rs])
+    let reg2 = cast[int32](gprs[rt])
+    if reg2 == 0:
+        hi1 = cast[uint64](cast[uint32](reg1))
+        if reg1 >= 0:
+            lo1 = cast[uint64](cast[uint32](0xFFFFFFFF'i32))
+        else:
+            lo1 = 1
+    elif (reg1 == 0x80000000'i32) and (reg2 == -1):
+        hi1 = 0
+        lo1 = cast[uint64](cast[uint32](0x80000000'i32))
+    else:
+        hi1 = cast[uint64](cast[uint32](reg1 mod reg2))
+        lo1 = cast[uint64](cast[uint32](reg1 div reg2))
 
 proc op_divu1() =
     let rs = (opcode shr 21) and 0b11111
@@ -723,9 +828,9 @@ proc op_cache() =
 
 const NORMAL_INSTRUCTION: array[64, proc] = [op_special, op_regimm, op_j, op_jal, op_beq, op_bne, op_blez, op_bgtz,
                                            op_addi, op_addiu, op_slti, op_sltiu, op_andi, op_ori, op_xori, op_lui,
-                                           op_cop0, op_cop1, op_unhandled, op_unhandled, op_beql, op_bnel, op_blezl, op_unhandled,
+                                           op_cop0, op_cop1, op_cop2, op_unhandled, op_beql, op_bnel, op_blezl, op_unhandled,
                                            op_unhandled, op_daddiu, op_unhandled, op_unhandled, op_mmi, op_unhandled, op_lq, op_sq,
-                                           op_lb, op_lh, op_unhandled, op_lw, op_lbu, op_lhu, op_unhandled, op_unhandled,
+                                           op_lb, op_lh, op_unhandled, op_lw, op_lbu, op_lhu, op_unhandled, op_nor,
                                            op_sb, op_sh, op_unhandled, op_sw, op_unhandled, op_unhandled, op_unhandled, op_cache,
                                            op_unhandled, op_lwc1, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_ld,
                                            op_unhandled, op_swc1, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_unhandled, op_sd]
@@ -739,8 +844,17 @@ proc set_elf*(elf_location: string, load_elf: bool) =
 
 proc ee_tick*() =
     #echo pc.toHex()
-    if pc == 0x80001000'u32:
-        echo "In kernel"
+    if pc > 0x80000000'u32 and pc < 0x80020000'u32:
+        if should_dump:
+            var s = newFileStream("ramdump.bin", fmWrite)
+            var i = 0'u32
+            while i < 0xB000:
+                s.write(load8(0x80000000'u32 + i))
+                i += 1
+            s.close()
+            should_dump = false
+            echo "Dumped RAM"
+
     if debug:
         echo pc.toHex() & " " & $gprs[18].toHex()
     gprs[0] = u128(0)

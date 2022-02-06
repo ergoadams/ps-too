@@ -1,4 +1,5 @@
-import bus, ee, gs
+import ee/ee_bus, ee/ee, ee/gs
+import iop/iop
 import times
 
 var running = true
@@ -12,6 +13,8 @@ var prev_time = cpuTime()
 
 while running:
     ee_tick()
+    #ee_tick()
+    #iop_tick()
     let cur_time = cpuTime()
     if (cur_time - prev_time) > 0.016:
         prev_time = cur_time

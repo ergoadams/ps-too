@@ -8,7 +8,7 @@ type
     DMAC_t = object
         ctrl, stat, pcr, sqwc, rbsr, rbor, enabler, enablew: uint32
 
-var bios: array[0x400000 , uint8]
+var bios*: array[0x400000 , uint8]
 var ram: array[0x2000000, uint8]
 var scratchpad: array[0x4000, uint8]
 var iop_ram: array[0x200000, uint8]
@@ -238,7 +238,7 @@ proc store128*(address: uint32, value: UInt128) =
         scratchpad[offset + 1] = cast[uint8]((value shr 8) and u128(0xFF))
         scratchpad[offset + 0] = cast[uint8]((value shr 0) and u128(0xFF))
     else:
-        echo "unhandled store128 " & address.toHex() & " " & value.toHex()
+        echo "Unhandled store128 " & address.toHex() & " " & value.toHex()
 
 proc store64*(address: uint32, value: uint64) =
     let address = translate_address(address)
@@ -280,7 +280,7 @@ proc store64*(address: uint32, value: uint64) =
         let temp = cast[uint32](value)
         dmac_store32(address, temp)
     else:
-        echo "unhandled store64 " & address.toHex() & " " & value.toHex()
+        echo "Unhandled store64 " & address.toHex() & " " & value.toHex()
 
 proc store32*(address: uint32, value: uint32) =
     let address = translate_address(address)
@@ -320,9 +320,10 @@ proc store32*(address: uint32, value: uint32) =
         weird_values[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         weird_values[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         weird_values[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif address == 0x1000F000'u32: set_intc_stat(value)
+    elif address == 0x1000F010'u32: set_intc_mask(value)
     else:
-        discard
-        #echo "unhandled store32 " & address.toHex() & " " & value.toHex()
+        echo "Unhandled store32 " & address.toHex() & " " & value.toHex()
 
 proc store16*(address: uint32, value: uint16) =
     let address = translate_address(address)
@@ -338,7 +339,7 @@ proc store16*(address: uint32, value: uint16) =
         scratchpad[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         scratchpad[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
     else:
-        echo "unhandled store16 " & address.toHex() & " " & value.toHex()
+        echo "Unhandled store16 " & address.toHex() & " " & value.toHex()
 
 proc store8*(address: uint32, value: uint8) =
     let address = translate_address(address)
@@ -353,7 +354,7 @@ proc store8*(address: uint32, value: uint8) =
     elif address == 0x1000F180:
         stdout.write char(value)
     else:
-        echo "unhandled store8 " & address.toHex() & " " & value.toHex()
+        echo "Unhandled store8 " & address.toHex() & " " & value.toHex()
 
 proc load128*(address: uint32): UInt128 =
     let address = translate_address(address)
@@ -434,6 +435,7 @@ proc load64*(address: uint32): uint64 =
         quit("Unhandled load64 " & address.toHex(), 0)
 
 proc load32*(address: uint32): uint32 =
+    let new_address = address
     let address = translate_address(address)
     if (address >= 0x00000000'u32) and (address < 0x00000000'u32 + 0x2000000):
         return  (cast[uint32](ram[address + 3]) shl 24) or 
@@ -453,6 +455,7 @@ proc load32*(address: uint32): uint32 =
                 (cast[uint32](scratchpad[offset + 1]) shl 8) or 
                 (cast[uint32](scratchpad[offset + 0]) shl 0)
     elif address == 0x10000000'u32: return timer_load(address)
+    elif address == 0x1000F000'u32: return get_intc_stat()
     elif address == 0x1000F010'u32: return get_intc_mask()
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         return dmac_load32(address)
@@ -461,7 +464,7 @@ proc load32*(address: uint32): uint32 =
     elif address == 0x1000F520: return DMAC.enabler
     elif address == 0x12001000'u32: return cast[uint32](GS_CSR)
     elif address == 0x1000F130'u32: return 0x00 # Unknown
-    #elif address == 0x1000F400'u32: return 0x00 # Unknown
+    #elif address == 0x1000F400'u32: return 0xFFFFFFFF'u32 # Unknown
     #elif address == 0x1000F410'u32: return 0x00 # Unknown
     elif address == 0x1000F430: return 0x00 # MCH_DRD 
     elif address == 0x1000F440: 
@@ -480,21 +483,22 @@ proc load32*(address: uint32): uint32 =
                 else: echo "Unhandled rdram SA"
         return 0x00
     elif address == 0x1000F410'u32: return 0'u32
-    elif (address >= 0x1000F400'u32) and (address < 0x1000F500'u32):
-        let offset = address - 0x1000F400'u32
-        return  (cast[uint32](weird_values[offset + 3]) shl 24) or 
-                (cast[uint32](weird_values[offset + 2]) shl 16) or 
-                (cast[uint32](weird_values[offset + 1]) shl 8) or 
-                (cast[uint32](weird_values[offset + 0]) shl 0)
+    #elif (address >= 0x1000F400'u32) and (address < 0x1000F500'u32):
+    #    let offset = address - 0x1000F400'u32
+    #    return  (cast[uint32](weird_values[offset + 3]) shl 24) or 
+    #            (cast[uint32](weird_values[offset + 2]) shl 16) or 
+    #            (cast[uint32](weird_values[offset + 1]) shl 8) or 
+    #            (cast[uint32](weird_values[offset + 0]) shl 0)
     elif (address >= 0x1C000000'u32) and (address < 0x1C000000'u32 + 0x200000):
-        quit("Trying to access IOP", 0)
+        #quit("Trying to access IOP", 0)
         let offset = address - 0x1C000000'u32
         return  (cast[uint32](iop_ram[offset + 3]) shl 24) or 
                 (cast[uint32](iop_ram[offset + 2]) shl 16) or 
                 (cast[uint32](iop_ram[offset + 1]) shl 8) or 
                 (cast[uint32](iop_ram[offset + 0]) shl 0)
     else: 
-        echo "Unhandled load32 " & address.toHex()
+        echo "Unhandled load32 " & address.toHex() & " " & new_address.toHex()
+        return 0
         #quit("Unhandled load32 " & address.toHex(), 0)
 
 proc load16*(address: uint32): uint16 =
