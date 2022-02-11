@@ -2,3 +2,4 @@ roms/
 *.dll
 *.exe
 *.bin
+ramdump.*

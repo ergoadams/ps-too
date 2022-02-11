@@ -4,7 +4,7 @@ type
     COP0_t = object
         index, entry_lo0, entry_lo1, page_mask, wired, badvaddr: uint32
         count, entry_hi, compare, status, cause, epc, config: uint32
-        pr_id: uint32
+        pr_id, tag_lo, error_epc: uint32
 
 var cop0 = COP0_t(pr_id: 0x2E20, status: 0x400004)
 var intc_stat: uint32
@@ -48,36 +48,33 @@ proc irq_active*(): bool =
 
 proc mfc0*(rd: uint32, rt: uint32, sel: uint32): uint32 =
     case rd:
+        of 0: return cop0.index
         of 8: return cop0.badvaddr
         of 9: return cop0.count
+        of 11: return cop0.compare
         of 12: return cop0.status
         of 13: return cop0.cause
         of 14: return cop0.epc
         of 15: return cop0.pr_id
+        of 16: return cop0.config
+        of 28: return cop0.tag_lo
         else: 
             echo "Unhandled mfc0 " & $rd
             return 0x00
 
 proc mtc0*(rd: uint32, sel: uint32, data: uint32) =
     case rd:
-        of 0:   cop0.index = data
-        of 2:   cop0.entry_lo0 = data
-        of 3:   cop0.entry_lo1 = data
-        of 5:   cop0.page_mask = data
-        of 6:   cop0.wired = data
-        of 9:   
-            #echo "COP0: set count to " & data.toHex()
-            cop0.count = data
-        of 10:  cop0.entry_hi = data
-        of 11:  
-            #echo "COP0: set compare to " & data.toHex()
-            cop0.compare = data
-        of 12:  
-            #echo "COP0: set status to " & data.toHex()
-            cop0.status = data
-        of 16:  
-            #echo "COP0: set config to " & data.toHex()
-            cop0.config = data
+        of 0:  cop0.index = data
+        of 2:  cop0.entry_lo0 = data
+        of 3:  cop0.entry_lo1 = data
+        of 5:  cop0.page_mask = data
+        of 6:  cop0.wired = data
+        of 9:  cop0.count = data
+        of 10: cop0.entry_hi = data
+        of 11: cop0.compare = data
+        of 12: cop0.status = data
+        of 14: cop0.epc = data
+        of 16: cop0.config = data
         else:
             echo "Unhandled mtc0 " & $rd & " " & $sel & " " & data.toHex()
 
@@ -102,3 +99,28 @@ proc set_intc_stat*(bit: uint32) =
 
 proc int_trigger*(value: uint32) =
     set_intc_stat(value)
+
+proc cop0_di*() =
+    if  (((cop0.status shr 17) and 1) != 0) or
+        (((cop0.status shr 1) and 1) != 0) or
+        (((cop0.status shr 2) and 1) != 0) or
+        (((cop0.status shr 3) and 3) == 0):
+        
+        cop0.status = cop0.status and (not (1'u32 shl 16))
+
+proc cop0_ei*() =
+    if  (((cop0.status shr 17) and 1) != 0) or
+        (((cop0.status shr 1) and 1) != 0) or
+        (((cop0.status shr 2) and 1) != 0) or
+        (((cop0.status shr 3) and 3) == 0):
+
+        cop0.status = cop0.status or (1'u32 shl 16)
+
+proc cop0_eret*(): uint32 =
+    let erl = ((cop0.status shr 2) and 1) != 0
+    if erl:
+        cop0.status = cop0.status and (not (1'u32 shl 2))
+        return cop0.error_epc
+    else:
+        cop0.status = cop0.status and (not (1'u32 shl 1))
+        return cop0.epc

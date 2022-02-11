@@ -18,6 +18,14 @@ var MCH_DRD: uint32
 var MCH_RICM: uint32
 var rdram_sdevid: uint32
 
+var sif_mscom, sif_smcom, sif_msflg, sif_smflg, sif_ctrl: uint32
+
+var vu0_code: array[0x1000, uint8]
+var vu0_data: array[0x1000, uint8]
+
+var vu1_code: array[0x4000, uint8]
+var vu1_data: array[0x4000, uint8]
+
 var weird_values: array[0x100, uint8]
 
 proc load32*(address: uint32): uint32 {.gcsafe, locks: 0.}
@@ -42,7 +50,7 @@ proc do_dma(channel: uint32) =
     let cur_channel = d_channels[channel]
     let dma_direction = cur_channel.chcr and 0b11
     if dma_direction != 1:
-        echo "Unhandled dma direction"
+        echo "Unhandled dma direction " & $dma_direction & " channel " & $channel
     let dma_mode = (cur_channel.chcr shr 2) and 0b11
     let tte = (cur_channel.chcr shr 6) and 1
     let tie = (cur_channel.chcr shr 7) and 1
@@ -85,6 +93,9 @@ proc do_dma(channel: uint32) =
                         dma_running = false
                 elif tagid == 1:
                     d_channels[channel].madr = d_channels[channel].tadr + 16
+                elif tagid == 3:
+                    d_channels[channel].madr = new_addr
+                    d_channels[channel].tadr += 16
                 else:
                     echo "Unhandled dmatag id " & $tagid
                     dma_running = false        
@@ -154,15 +165,21 @@ proc dmac_store32(address: uint32, value: uint32) =
     elif address == 0x1000E040'u32: DMAC.rbsr = value
     elif address == 0x1000E050'u32: DMAC.rbor = value
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
-        var channel = (address shr 12) and 0xF - 0x8
-        if channel == 3 or channel == 8:
-            if ((address shr 8) and 0xF) == 0x4:
-                channel += 1
-        elif channel == 5:
-            if ((address shr 8) and 0xF) == 0x4:
-                channel += 1
-            elif ((address shr 8) and 0xF) == 0x8:
-                channel += 2
+        let channel_address = (address shr 8) and 0xFF
+        var channel: uint32
+        case channel_address:
+            of 0x80: channel = 0
+            of 0x90: channel = 1
+            of 0xA0: channel = 2
+            of 0xB0: channel = 3
+            of 0xB4: channel = 4
+            of 0xC0: channel = 5
+            of 0xC4: channel = 6
+            of 0xC8: channel = 7
+            of 0xD0: channel = 8
+            of 0xD4: channel = 9
+            else:
+                quit("Invalid channel")
         case address and 0xFF:
             of 0x00: 
                 #echo "Set channel " & $channel & " control to " & value.toHex()
@@ -201,6 +218,60 @@ proc store128*(address: uint32, value: UInt128) =
         ram[offset + 2] = cast[uint8]((value shr 16) and u128(0xFF))
         ram[offset + 1] = cast[uint8]((value shr 8) and u128(0xFF))
         ram[offset + 0] = cast[uint8]((value shr 0) and u128(0xFF))
+    elif (address >= 0x11000000'u32) and (address < 0x11000000'u32 + 0x1000):
+        let offset = address - 0x11000000'u32
+        vu0_code[offset + 15] = cast[uint8]((value shr 120) and u128(0xFF))
+        vu0_code[offset + 14] = cast[uint8]((value shr 112) and u128(0xFF))
+        vu0_code[offset + 13] = cast[uint8]((value shr 104) and u128(0xFF))
+        vu0_code[offset + 12] = cast[uint8]((value shr 96) and u128(0xFF))
+        vu0_code[offset + 11] = cast[uint8]((value shr 88) and u128(0xFF))
+        vu0_code[offset + 10] = cast[uint8]((value shr 80) and u128(0xFF))
+        vu0_code[offset + 9] = cast[uint8]((value shr 72) and u128(0xFF))
+        vu0_code[offset + 8] = cast[uint8]((value shr 64) and u128(0xFF))
+        vu0_code[offset + 7] = cast[uint8]((value shr 56) and u128(0xFF))
+        vu0_code[offset + 6] = cast[uint8]((value shr 48) and u128(0xFF))
+        vu0_code[offset + 5] = cast[uint8]((value shr 40) and u128(0xFF))
+        vu0_code[offset + 4] = cast[uint8]((value shr 32) and u128(0xFF))
+        vu0_code[offset + 3] = cast[uint8]((value shr 24) and u128(0xFF))
+        vu0_code[offset + 2] = cast[uint8]((value shr 16) and u128(0xFF))
+        vu0_code[offset + 1] = cast[uint8]((value shr 8) and u128(0xFF))
+        vu0_code[offset + 0] = cast[uint8]((value shr 0) and u128(0xFF))
+    elif (address >= 0x11004000'u32) and (address < 0x11004000'u32 + 0x1000):
+        let offset = address - 0x11004000'u32
+        vu0_data[offset + 15] = cast[uint8]((value shr 120) and u128(0xFF))
+        vu0_data[offset + 14] = cast[uint8]((value shr 112) and u128(0xFF))
+        vu0_data[offset + 13] = cast[uint8]((value shr 104) and u128(0xFF))
+        vu0_data[offset + 12] = cast[uint8]((value shr 96) and u128(0xFF))
+        vu0_data[offset + 11] = cast[uint8]((value shr 88) and u128(0xFF))
+        vu0_data[offset + 10] = cast[uint8]((value shr 80) and u128(0xFF))
+        vu0_data[offset + 9] = cast[uint8]((value shr 72) and u128(0xFF))
+        vu0_data[offset + 8] = cast[uint8]((value shr 64) and u128(0xFF))
+        vu0_data[offset + 7] = cast[uint8]((value shr 56) and u128(0xFF))
+        vu0_data[offset + 6] = cast[uint8]((value shr 48) and u128(0xFF))
+        vu0_data[offset + 5] = cast[uint8]((value shr 40) and u128(0xFF))
+        vu0_data[offset + 4] = cast[uint8]((value shr 32) and u128(0xFF))
+        vu0_data[offset + 3] = cast[uint8]((value shr 24) and u128(0xFF))
+        vu0_data[offset + 2] = cast[uint8]((value shr 16) and u128(0xFF))
+        vu0_data[offset + 1] = cast[uint8]((value shr 8) and u128(0xFF))
+        vu0_data[offset + 0] = cast[uint8]((value shr 0) and u128(0xFF))
+    elif (address >= 0x1100C000'u32) and (address < 0x1100C000'u32 + 0x4000):
+        let offset = address - 0x1100C000'u32
+        vu1_data[offset + 15] = cast[uint8]((value shr 120) and u128(0xFF))
+        vu1_data[offset + 14] = cast[uint8]((value shr 112) and u128(0xFF))
+        vu1_data[offset + 13] = cast[uint8]((value shr 104) and u128(0xFF))
+        vu1_data[offset + 12] = cast[uint8]((value shr 96) and u128(0xFF))
+        vu1_data[offset + 11] = cast[uint8]((value shr 88) and u128(0xFF))
+        vu1_data[offset + 10] = cast[uint8]((value shr 80) and u128(0xFF))
+        vu1_data[offset + 9] = cast[uint8]((value shr 72) and u128(0xFF))
+        vu1_data[offset + 8] = cast[uint8]((value shr 64) and u128(0xFF))
+        vu1_data[offset + 7] = cast[uint8]((value shr 56) and u128(0xFF))
+        vu1_data[offset + 6] = cast[uint8]((value shr 48) and u128(0xFF))
+        vu1_data[offset + 5] = cast[uint8]((value shr 40) and u128(0xFF))
+        vu1_data[offset + 4] = cast[uint8]((value shr 32) and u128(0xFF))
+        vu1_data[offset + 3] = cast[uint8]((value shr 24) and u128(0xFF))
+        vu1_data[offset + 2] = cast[uint8]((value shr 16) and u128(0xFF))
+        vu1_data[offset + 1] = cast[uint8]((value shr 8) and u128(0xFF))
+        vu1_data[offset + 0] = cast[uint8]((value shr 0) and u128(0xFF))
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
         bios[offset + 15] = cast[uint8]((value shr 120) and u128(0xFF))
@@ -252,6 +323,26 @@ proc store64*(address: uint32, value: uint64) =
         ram[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         ram[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         ram[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif (address >= 0x11008000'u32) and (address < 0x11008000'u32 + 0x4000):
+        let offset = address - 0x11008000'u32
+        vu1_code[offset + 7] = cast[uint8]((value shr 56) and 0xFF)
+        vu1_code[offset + 6] = cast[uint8]((value shr 48) and 0xFF)
+        vu1_code[offset + 5] = cast[uint8]((value shr 40) and 0xFF)
+        vu1_code[offset + 4] = cast[uint8]((value shr 32) and 0xFF)
+        vu1_code[offset + 3] = cast[uint8]((value shr 24) and 0xFF)
+        vu1_code[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
+        vu1_code[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
+        vu1_code[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
+    elif (address >= 0x1100C000'u32) and (address < 0x1100C000'u32 + 0x4000):
+        let offset = address - 0x1100C000'u32
+        vu1_data[offset + 7] = cast[uint8]((value shr 56) and 0xFF)
+        vu1_data[offset + 6] = cast[uint8]((value shr 48) and 0xFF)
+        vu1_data[offset + 5] = cast[uint8]((value shr 40) and 0xFF)
+        vu1_data[offset + 4] = cast[uint8]((value shr 32) and 0xFF)
+        vu1_data[offset + 3] = cast[uint8]((value shr 24) and 0xFF)
+        vu1_data[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
+        vu1_data[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
+        vu1_data[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
         bios[offset + 7] = cast[uint8]((value shr 56) and 0xFF)
@@ -291,6 +382,7 @@ proc store32*(address: uint32, value: uint32) =
         ram[address + 0] = cast[uint8]((value shr 0) and 0xFF)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
+
         bios[offset + 3] = cast[uint8]((value shr 24) and 0xFF)
         bios[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         bios[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
@@ -301,7 +393,10 @@ proc store32*(address: uint32, value: uint32) =
         scratchpad[offset + 2] = cast[uint8]((value shr 16) and 0xFF)
         scratchpad[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         scratchpad[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
-    elif address == 0x10000010: timer_store(address, value)
+    elif (address >= 0x10000000'u32) and (address < 0x10000000'u32 + 0xFF): timer_store(address, value)
+    elif (address >= 0x10000800'u32) and (address < 0x10000800'u32 + 0xFF): timer_store(address, value)
+    elif (address >= 0x10001000'u32) and (address < 0x10001000'u32 + 0xFF): timer_store(address, value)
+    elif (address >= 0x10001800'u32) and (address < 0x10001800'u32 + 0xFF): timer_store(address, value)
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
         dmac_store32(address, value)
     elif (address >= 0x1000E000'u32) and (address < 0x1000E060'u32):
@@ -322,6 +417,14 @@ proc store32*(address: uint32, value: uint32) =
         weird_values[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
     elif address == 0x1000F000'u32: set_intc_stat(value)
     elif address == 0x1000F010'u32: set_intc_mask(value)
+    elif address == 0x1000F200'u32: sif_mscom = value
+    elif address == 0x1000F220'u32: sif_msflg = value
+    elif address == 0x1000F230'u32: sif_smflg = value
+    elif address == 0x1000F240'u32: 
+        if (value and 0x100) == 0:
+            sif_ctrl = sif_ctrl and (not 0x100'u32)
+        else:
+            sif_ctrl = sif_ctrl or 0x100'u32
     else:
         echo "Unhandled store32 " & address.toHex() & " " & value.toHex()
 
@@ -332,6 +435,7 @@ proc store16*(address: uint32, value: uint16) =
         ram[address + 0] = cast[uint8]((value shr 0) and 0xFF)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
+        
         bios[offset + 1] = cast[uint8]((value shr 8) and 0xFF)
         bios[offset + 0] = cast[uint8]((value shr 0) and 0xFF)
     elif (address >= 0x70000000'u32) and (address < 0x70000000'u32 + 0x1000000):
@@ -377,6 +481,7 @@ proc load128*(address: uint32): UInt128 =
                 (cast[UInt128](ram[address + 0]) shl 0)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
+
         return  (cast[UInt128](bios[offset + 15]) shl 120) or 
                 (cast[UInt128](bios[offset + 14]) shl 112) or 
                 (cast[UInt128](bios[offset + 13]) shl 104) or 
@@ -410,6 +515,7 @@ proc load64*(address: uint32): uint64 =
                 (cast[uint64](ram[address + 0]) shl 0)
     elif (address >= 0x1FC00000'u32) and (address < 0x1FC00000'u32 + 0x400000):
         let offset = address - 0x1FC00000'u32
+        
         return  (cast[uint64](bios[offset + 7]) shl 56) or 
                 (cast[uint64](bios[offset + 6]) shl 48) or 
                 (cast[uint64](bios[offset + 5]) shl 40) or 
@@ -454,7 +560,10 @@ proc load32*(address: uint32): uint32 =
                 (cast[uint32](scratchpad[offset + 2]) shl 16) or 
                 (cast[uint32](scratchpad[offset + 1]) shl 8) or 
                 (cast[uint32](scratchpad[offset + 0]) shl 0)
-    elif address == 0x10000000'u32: return timer_load(address)
+    elif (address >= 0x10000000'u32) and (address < 0x10000000'u32 + 0xFF): return timer_load(address)
+    elif (address >= 0x10000800'u32) and (address < 0x10000800'u32 + 0xFF): return timer_load(address)
+    elif (address >= 0x10001000'u32) and (address < 0x10001000'u32 + 0xFF): return timer_load(address)
+    elif (address >= 0x10001800'u32) and (address < 0x10001800'u32 + 0xFF): return timer_load(address)
     elif address == 0x1000F000'u32: return get_intc_stat()
     elif address == 0x1000F010'u32: return get_intc_mask()
     elif (address >= 0x10008000'u32) and (address < 0x1000D500'u32):
@@ -466,6 +575,11 @@ proc load32*(address: uint32): uint32 =
     elif address == 0x1000F130'u32: return 0x00 # Unknown
     #elif address == 0x1000F400'u32: return 0xFFFFFFFF'u32 # Unknown
     #elif address == 0x1000F410'u32: return 0x00 # Unknown
+    elif address == 0x1000F200'u32: return sif_mscom
+    elif address == 0x1000F210'u32: return sif_smcom
+    elif address == 0x1000F220'u32: return sif_msflg
+    elif address == 0x1000F230'u32: return sif_smflg or 0x10000
+    elif address == 0x1000F240'u32: return sif_ctrl
     elif address == 0x1000F430: return 0x00 # MCH_DRD 
     elif address == 0x1000F440: 
         let sop = cast[uint8]((MCH_RICM shr 6) and 0xF)
@@ -483,12 +597,12 @@ proc load32*(address: uint32): uint32 =
                 else: echo "Unhandled rdram SA"
         return 0x00
     elif address == 0x1000F410'u32: return 0'u32
-    #elif (address >= 0x1000F400'u32) and (address < 0x1000F500'u32):
-    #    let offset = address - 0x1000F400'u32
-    #    return  (cast[uint32](weird_values[offset + 3]) shl 24) or 
-    #            (cast[uint32](weird_values[offset + 2]) shl 16) or 
-    #            (cast[uint32](weird_values[offset + 1]) shl 8) or 
-    #            (cast[uint32](weird_values[offset + 0]) shl 0)
+    elif (address >= 0x1000F400'u32) and (address < 0x1000F500'u32):
+        let offset = address - 0x1000F400'u32
+        return  (cast[uint32](weird_values[offset + 3]) shl 24) or 
+                (cast[uint32](weird_values[offset + 2]) shl 16) or 
+                (cast[uint32](weird_values[offset + 1]) shl 8) or 
+                (cast[uint32](weird_values[offset + 0]) shl 0)
     elif (address >= 0x1C000000'u32) and (address < 0x1C000000'u32 + 0x200000):
         #quit("Trying to access IOP", 0)
         let offset = address - 0x1C000000'u32
@@ -515,7 +629,8 @@ proc load16*(address: uint32): uint16 =
         return  (cast[uint16](scratchpad[offset + 1]) shl 8) or 
                 (cast[uint16](scratchpad[offset + 0]) shl 0)
     else: 
-        quit("Unhandled load16 " & address.toHex(), 0)
+        echo "Unhandled load16 " & address.toHex()
+        return 0
 
 proc load8*(address: uint32): uint8 =
     let address = translate_address(address)
