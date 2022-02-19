@@ -693,6 +693,15 @@ proc iop_tick*() =
         exception(Exception.LoadAddressError)
         return
     current_instruction = load32(pc)
+
+    if (pc == 0x12C48) or (pc == 0x1420C) or (pc == 0x1430C):
+        var text_pointer = regs[5]
+        var text_size = regs[6]
+        while text_size > 0:
+            stdout.write char(get_char(text_pointer and 0x1FFFFF))
+            text_pointer += 1'u32
+            text_size -= 1'u32
+
     pc = next_pc
     next_pc = pc + 4
     delay_slot = branch_bool
@@ -700,7 +709,6 @@ proc iop_tick*() =
 
     cycle_count += 1
     if (cycle_count and 7) == 0:
-        #discard
         tick_timers()
 
     if cop0_irq_active():
@@ -708,15 +716,4 @@ proc iop_tick*() =
     else:
         irq_tick()
         execute()
-
-    if (pc == 0x12C48) or (pc == 0x1420C) or (pc == 0x1430C):
-        var text_pointer = regs[5]
-        var text_size = regs[6]
-        while text_size > 0:
-            stdout.write char(load8(text_pointer and 0x1FFFFF))
-            text_pointer += 1'u32
-            text_size -= 1'u32
-
-    if pc == 0xB0:
-        if regs[9] == 0x3D:
-            stdout.write char(regs[4])
+    dma_tick()

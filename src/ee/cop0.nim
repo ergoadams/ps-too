@@ -82,7 +82,8 @@ proc cop0_tick_counter*() =
     cop0.count += 1
 
 proc op_tlbwi*() =
-    echo "tlbwi should access tlb entry " & $cop0.index
+    discard
+    #echo "tlbwi should access tlb entry " & $cop0.index
 
 proc set_intc_mask*(bit: uint32) =
     intc_mask = intc_mask or (1'u32 shl bit)

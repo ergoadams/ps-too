@@ -677,13 +677,14 @@ proc op_sd() =
         store64(vaddr, data)
 
 proc op_ld() =
-    let base = opcode.rs
-    let rt = opcode.rt
-    let offset = cast[int16](opcode.immediate)
+    {.gcsafe.}:
+        let base = opcode.rs
+        let rt = opcode.rt
+        let offset = cast[int16](opcode.immediate)
 
-    let vaddr = cast[uint32](offset) + get_word(0, base)
-    let value = load64(vaddr)
-    set_dword(0, rt, value)
+        let vaddr = cast[uint32](offset) + get_word(0, base)
+        let value = load64(vaddr)
+        set_dword(0, rt, value)
 
 proc op_cop0() =
     sub_op_index = (opcode.value shr 21) and 0x1F
@@ -738,10 +739,6 @@ proc op_beq() =
     let imm = cast[int32](cast[int16](opcode.immediate))
 
     let offset = imm shl 2
-    if pc == 0x80006278'u32:
-        echo "yeet"
-        echo get_dword(0, rs).toHex()
-        echo get_dword(0, rt).toHex()
     if get_dword(0, rs) == get_dword(0, rt):
         prepare_branch_delay()
         delayed_pc = pc + cast[uint32](offset)
@@ -858,22 +855,24 @@ proc op_sh() =
         store16(vaddr, cast[uint16](data))
 
 proc op_lb() =
-    let base = opcode.rs
-    let rt = opcode.rt
-    let offset = cast[int16](opcode.immediate)
-    
-    let vaddr = cast[uint32](offset) + get_word(0, base)
-    let value = cast[uint64](cast[int8](load8(vaddr)))
-    set_dword(0, rt, value)
+    {.gcsafe.}:
+        let base = opcode.rs
+        let rt = opcode.rt
+        let offset = cast[int16](opcode.immediate)
+        
+        let vaddr = cast[uint32](offset) + get_word(0, base)
+        let value = cast[uint64](cast[int8](load8(vaddr)))
+        set_dword(0, rt, value)
 
 proc op_lh() =
-    let base = opcode.rs
-    let rt = opcode.rt
-    let offset = cast[int16](opcode.immediate)
-    
-    let vaddr = cast[uint32](offset) + get_word(0, base)
-    let value = cast[uint64](cast[int16](load16(vaddr)))
-    set_dword(0, rt, value)
+    {.gcsafe.}:
+        let base = opcode.rs
+        let rt = opcode.rt
+        let offset = cast[int16](opcode.immediate)
+        
+        let vaddr = cast[uint32](offset) + get_word(0, base)
+        let value = cast[uint64](cast[int16](load16(vaddr)))
+        set_dword(0, rt, value)
 
 proc op_jal() =
     let index = opcode.target
@@ -888,39 +887,43 @@ proc op_j() =
     delayed_pc = (pc and 0xF0000000'u32) or (index shl 2)
 
 proc op_lbu() =
-    let base = opcode.rs
-    let rt = opcode.rt
-    let offset = cast[int16](opcode.immediate)
+    {.gcsafe.}:
+        let base = opcode.rs
+        let rt = opcode.rt
+        let offset = cast[int16](opcode.immediate)
 
-    let vaddr = cast[uint32](offset) + get_word(0, base)
-    let value = cast[uint64](load8(vaddr))
-    set_dword(0, rt, value)
+        let vaddr = cast[uint32](offset) + get_word(0, base)
+        let value = cast[uint64](load8(vaddr))
+        set_dword(0, rt, value)
 
 proc op_lhu() =
-    let base = opcode.rs
-    let rt = opcode.rt
-    let offset = cast[int16](opcode.immediate)
+    {.gcsafe.}:
+        let base = opcode.rs
+        let rt = opcode.rt
+        let offset = cast[int16](opcode.immediate)
 
-    let vaddr = cast[uint32](offset) + get_word(0, base)
+        let vaddr = cast[uint32](offset) + get_word(0, base)
 
-    let value = load16(vaddr)
-    set_dword(0, rt, cast[uint64](value))
+        let value = load16(vaddr)
+        set_dword(0, rt, cast[uint64](value))
 
 proc op_sq() =
-    let base = opcode.rs
-    let rt = opcode.rt
-    let offset = cast[int16](opcode.immediate)
+    {.gcsafe.}:
+        let base = opcode.rs
+        let rt = opcode.rt
+        let offset = cast[int16](opcode.immediate)
 
-    let vaddr = cast[uint32](offset) + get_word(0, base)
-    store128(vaddr, gprs[rt])
+        let vaddr = cast[uint32](offset) + get_word(0, base)
+        store128(vaddr, gprs[rt])
 
 proc op_lq() =
-    let base = opcode.rs
-    let rt = opcode.rt
-    let offset = cast[int16](opcode.immediate)
+    {.gcsafe.}:
+        let base = opcode.rs
+        let rt = opcode.rt
+        let offset = cast[int16](opcode.immediate)
 
-    let vaddr = cast[uint32](offset) + get_word(0, base)
-    gprs[rt] = load128(vaddr)
+        let vaddr = cast[uint32](offset) + get_word(0, base)
+        gprs[rt] = load128(vaddr)
 
 proc op_lwc1() =
     echo "unhandled lwc1"
@@ -1058,8 +1061,9 @@ const MMI_INSTRUCTION: array[64, proc] = [op_unhandled, op_unhandled, op_unhandl
 
 
 proc op_mmi() =
-    sub_op_index = opcode.value and 0b111111
-    MMI_INSTRUCTION[sub_op_index]()
+    {.gcsafe.}:
+        sub_op_index = opcode.value and 0b111111
+        MMI_INSTRUCTION[sub_op_index]()
 
 proc op_daddiu() =
     let rs = opcode.rs
@@ -1075,22 +1079,23 @@ proc op_cache() =
     discard
 
 proc op_ldl() =
-    const LDL_MASK: array[8, uint64] = [0x00FFFFFFFFFFFFFF'u64, 0x0000FFFFFFFFFFFF'u64, 0x000000FFFFFFFFFF'u64, 0x00000000FFFFFFFF'u64,
-                                        0x0000000000FFFFFF'u64, 0x000000000000FFFF'u64, 0x00000000000000FF'u64, 0x0000000000000000'u64]
-    const LDL_SHIFT: array[8, uint32] = [56'u32, 48'u32, 40'u32, 32'u32, 24'u32, 16'u32, 8'u32, 0'u32]
+    {.gcsafe.}:
+        const LDL_MASK: array[8, uint64] = [0x00FFFFFFFFFFFFFF'u64, 0x0000FFFFFFFFFFFF'u64, 0x000000FFFFFFFFFF'u64, 0x00000000FFFFFFFF'u64,
+                                            0x0000000000FFFFFF'u64, 0x000000000000FFFF'u64, 0x00000000000000FF'u64, 0x0000000000000000'u64]
+        const LDL_SHIFT: array[8, uint32] = [56'u32, 48'u32, 40'u32, 32'u32, 24'u32, 16'u32, 8'u32, 0'u32]
 
-    let rt = opcode.rt
-    let base = opcode.rs
-    let offset = cast[int16](opcode.immediate)
+        let rt = opcode.rt
+        let base = opcode.rs
+        let offset = cast[int16](opcode.immediate)
 
-    let address = cast[uint32](offset) + get_word(0, base)
-    let alligned_addr = address and (not 0x7'u32)  
-    let shift = address and 0x7
+        let address = cast[uint32](offset) + get_word(0, base)
+        let alligned_addr = address and (not 0x7'u32)  
+        let shift = address and 0x7
 
-    let dword = load64(alligned_addr)
-    let result = (get_dword(0, rt) and LDL_MASK[shift]) or (dword shl LDL_SHIFT[shift])
+        let dword = load64(alligned_addr)
+        let result = (get_dword(0, rt) and LDL_MASK[shift]) or (dword shl LDL_SHIFT[shift])
 
-    set_dword(0, rt, result)     
+        set_dword(0, rt, result)     
 
 proc op_sdl() =
     {.gcsafe.}:
@@ -1112,22 +1117,23 @@ proc op_sdl() =
         store64(alligned_addr, result)  
 
 proc op_ldr() =
-    const LDR_MASK: array[8, uint64] = [0x0000000000000000'u64, 0xFF00000000000000'u64, 0xFFFF000000000000'u64, 0xFFFFFF0000000000'u64,
-                                        0xFFFFFFFF00000000'u64, 0xFFFFFFFFFF000000'u64, 0xFFFFFFFFFFFF0000'u64, 0xFFFFFFFFFFFFFF00'u64]
-    const LDR_SHIFT: array[8, uint32] = [0'u32, 8'u32, 16'u32, 24'u32, 32'u32, 40'u32, 48'u32, 56'u32]
+    {.gcsafe.}:
+        const LDR_MASK: array[8, uint64] = [0x0000000000000000'u64, 0xFF00000000000000'u64, 0xFFFF000000000000'u64, 0xFFFFFF0000000000'u64,
+                                            0xFFFFFFFF00000000'u64, 0xFFFFFFFFFF000000'u64, 0xFFFFFFFFFFFF0000'u64, 0xFFFFFFFFFFFFFF00'u64]
+        const LDR_SHIFT: array[8, uint32] = [0'u32, 8'u32, 16'u32, 24'u32, 32'u32, 40'u32, 48'u32, 56'u32]
 
-    let rt = opcode.rt
-    let base = opcode.rs
-    let offset = cast[int16](opcode.immediate)
+        let rt = opcode.rt
+        let base = opcode.rs
+        let offset = cast[int16](opcode.immediate)
 
-    let address = cast[uint32](offset) + get_word(0, base)
-    let alligned_addr = address and (not 0x7'u32)  
-    let shift = address and 0x7
+        let address = cast[uint32](offset) + get_word(0, base)
+        let alligned_addr = address and (not 0x7'u32)  
+        let shift = address and 0x7
 
-    let dword = load64(alligned_addr)
-    let result = (get_dword(0, rt) and LDR_MASK[shift]) or (dword shr LDR_SHIFT[shift])
+        let dword = load64(alligned_addr)
+        let result = (get_dword(0, rt) and LDR_MASK[shift]) or (dword shr LDR_SHIFT[shift])
 
-    set_dword(0, rt, result)   
+        set_dword(0, rt, result)   
 
 proc op_sdr() =
     {.gcsafe.}:
@@ -1206,4 +1212,5 @@ proc ee_tick*() =
 
     cop0_tick_counter()
     tick_timers()
+    dmac_tick()
     

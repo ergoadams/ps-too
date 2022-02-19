@@ -2,138 +2,90 @@ import strutils
 import interrupt
 
 type
-    Timer = ref object
-        counter: uint16
-        target: uint16
-        wrap_irq: bool
-        use_sync: bool
-        sync: uint16
-        target_wrap: bool
-        target_irq: bool
-        repeat_irq: bool
-        negate_irq: bool
-        clock_source: uint16
-        interrupt: bool
-        target_reached: bool
-        overflow_reached: bool
+    TimerMode_t = object
+        v: uint64
+        gate_enable, gate_mode: uint64
+        reset_on_intr, compare_intr, overflow_intr, repeat_intr: uint64
+        levl, external_signal, tm2_prescaler, intr_enabled: uint64
+        compare_intr_raised, overflow_intr_raised, tm4_prescalar, tm5_prescalar: uint64
+    
+    Timer_t = object
+        counter: uint64
+        mode: TimerMode_t
+        target: uint64
 
-var timers = [Timer(), Timer(), Timer()]
-var timer_debug* = false
-var timer_temp = false
+proc `value=`(i: var TimerMode_t, data: uint32) {.inline.} =
+    i.v = data
+    i.gate_enable = (data shr 0) and 1
+    i.gate_mode = (data shr 1) and 3
+    i.reset_on_intr = (data shr 3) and 1
+    i.compare_intr = (data shr 4) and 1
+    i.overflow_intr = (data shr 5) and 1
+    i.repeat_intr = (data shr 6) and 1
+    i.levl = (data shr 7) and 1
+    i.external_signal = (data shr 8) and 1
+    i.tm2_prescaler = (data shr 9) and 1
+    i.intr_enabled = (data shr 10) and 1
+    i.compare_intr_raised = (data shr 11) and 1
+    i.overflow_intr_raised = (data shr 12) and 1
+    i.tm4_prescalar = (data shr 13) and 1
+    i.tm5_prescalar = (data shr 14) and 1
 
-proc timer_set_mode(timer: Timer, value: uint16) =
-    timer.use_sync = (value and 1) != 0
-    timer.sync = (value shr 1) and 3
-    timer.target_wrap = ((value shr 3) and 1) != 0
-    timer.target_irq = ((value shr 4) and 1) != 0
-    timer.wrap_irq = ((value shr 5) and 1) != 0
-    timer.repeat_irq = ((value shr 6) and 1) != 0
-    timer.negate_irq = ((value shr 7) and 1) != 0
-    timer.clock_source = (value shr 8) and 1
-    timer.interrupt = false
-    timer.counter = 0'u16
+proc `value`(i: TimerMode_t): uint32 {.inline.} =
+    var temp: uint64
+    temp = temp or (i.gate_enable shl 0)
+    temp = temp or (i.gate_mode shl 1)
+    temp = temp or (i.reset_on_intr shl 3)
+    temp = temp or (i.compare_intr shl 4)
+    temp = temp or (i.overflow_intr shl 5)
+    temp = temp or (i.repeat_intr shl 6)
+    temp = temp or (i.levl shl 7)
+    temp = temp or (i.external_signal shl 8)
+    temp = temp or (i.tm2_prescaler shl 9)
+    temp = temp or (i.intr_enabled shl 10)
+    temp = temp or (i.compare_intr_raised shl 11)
+    temp = temp or (i.overflow_intr_raised shl 12)
+    temp = temp or (i.tm4_prescalar shl 13)
+    temp = temp or (i.tm5_prescalar shl 14)
+    return uint32(temp)
 
-    if timer.wrap_irq:
-        quit("Wrap IRQ not supported", QuitSuccess)
-
-    if (timer.wrap_irq or timer.target_irq) and (not timer.repeat_irq):
-        quit("One shot timer interrupts are not supported", QuitSuccess)
-
-    if timer.negate_irq:
-        quit("Only pulse interrupts are supported", QuitSuccess)
-
-    if timer.use_sync:
-        discard
-        #echo "Sync mode is not supported"
-
-proc timer_mode(timer: Timer): uint16 =
-    var r = 0'u16
-    if timer.use_sync:
-        r = r or 1'u16
-    r = r or (timer.sync shl 1)
-    if timer.target_wrap:
-        r = r or (1'u16 shl 3)
-    if timer.target_irq:
-        r = r or (1'u16 shl 4)
-    if timer.wrap_irq:
-        r = r or (1'u16 shl 5)
-    if timer.repeat_irq:
-        r = r or (1'u16 shl 6)
-    if timer.negate_irq:
-        r = r or (1'u16 shl 7)
-    r = r or (timer.clock_source shl 8)
-    if not timer.interrupt:
-        r = r or (1'u16 shl 10)
-    if timer.target_reached:
-        r = r or (1'u16 shl 11)
-    if timer.overflow_reached:
-        r = r or (1'u16 shl 12)
-    timer.target_reached = false
-    timer.overflow_reached = false
-    timer.interrupt = false
-    return r
+var timers: array[6, Timer_t]
 
 proc tick_timers*() =
-    # Timer 2 (sysclk or sysclk/8) is enabled in bios
-    # Timer 2 target is set to 0xFFFF
-    # Timer 2 mode: free run
-    #               reset after timer = target
-    #               IRQ repeat mode
-    #               pulse mode
-    #               source sysclk/8
-    if timers[2].counter != 0xFFFF'u16:
-        timers[2].counter += 1
-        timers[2].overflow_reached = false
-    else:
-        timers[2].overflow_reached = true
+    let old_count = timers[5].counter
+    timers[5].counter += 1
+    if (timers[5].counter >= timers[5].target) and (old_count < timers[5].target):
+        timers[5].mode.compare_intr_raised = 1
+        if (timers[5].mode.compare_intr != 0) and (timers[5].mode.intr_enabled != 0):
+            echo "IOP timer should trigger int"
+        if timers[5].mode.reset_on_intr != 0:
+            timers[5].counter = 0
 
-    if (timers[2].counter == timers[2].target) and (not timers[2].interrupt):
-        timers[2].target_reached = true
-        pend_irq(1, Interrupt.Timer2)
-        timers[2].interrupt = true
+    if timers[5].counter > 0xFFFFFFFF'u32:
+        timers[5].mode.overflow_intr_raised = 1
+        if (timers[5].mode.overflow_intr != 0) and (timers[5].mode.intr_enabled != 0):
+            echo "IOP timer should trigger int overflow"
+        timers[5].counter -= 0xFFFFFFFF'u32
 
-    if timers[2].target_wrap:
-        timers[2].counter = 0
-        timers[2].interrupt = false
 
-    if timers[2].counter == 0xFFFF'u16:
-        if timers[2].wrap_irq:
-            pend_irq(1, Interrupt.Timer2)
-        timers[2].counter = 0'u16
-        timers[2].interrupt = false
-        timers[2].overflow_reached = false
-        timers[2].target_reached = false
+proc timers_load*(address: uint32): uint32 =
+    echo "Unhandled IOP timer load"
 
-proc timers_load32*(offset: uint32): uint32 =
-    let instance = offset shr 4
-    #echo "Timer", instance, " load32"
-    case offset and 0xF:
-        of 0: return uint32(timers[instance].counter)
-        of 4: return uint32(timer_mode(timers[instance]))
-        of 8: return uint32(timers[instance].target)
-        else: quit("Unhandled timer register read " & (offset and 0xF).toHex(), QuitSuccess)
 
-proc timers_store16*(offset: uint32, value: uint16) =
-    let instance = offset shr 4
-    case offset and 0xF:
-        of 0:
-            #echo "Set timer", instance, " value to ", value.toHex()
-            if instance == 2 and value == 0:
-                #if timer_temp:
-                    #timer_debug = true
-                timer_temp = true
-            timers[instance].counter = value
-            timers[instance].target_reached = false
-            timers[instance].overflow_reached = false
-            timers[instance].interrupt = false
-        of 4:
-            #echo "Set timer", instance, " mode to ", int64(value).toBin(16)
-            timer_set_mode(timers[instance], value)
-        of 8:
-            #echo "Set timer", instance, " target to ", value.toHex()
-            timers[instance].target = value
-            timers[instance].target_reached = false
-            timers[instance].overflow_reached = false
-            timers[instance].interrupt = false
-            timers[instance].counter = 0'u16
-        else: quit("Unhandled timer register read " & (offset and 0xF).toHex(), QuitSuccess)
+proc timers_store*(address: uint32, data: uint32) =
+    let group = (address shr 10) and 1
+    let timer_index = ((address and 0x30) shr 4) + 3*group
+    let offset = (address and 0xF) shr 2
+    case offset:
+        of 0: timers[timer_index].counter = data
+        of 1: 
+            timers[timer_index].mode.value = data
+            timers[timer_index].mode.intr_enabled = 1
+            timers[timer_index].counter = 0
+        of 2:
+            timers[timer_index].mode.value = data
+            if timers[timer_index].mode.levl == 0:
+                timers[timer_index].mode.intr_enabled = 1
+        else: quit("Unhandled IOP timers store offset " & $offset)
+
+    

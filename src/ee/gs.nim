@@ -1,22 +1,12 @@
-import pkg/nint128, csfml, strutils
-
-# CSFML init
-var screenWidth: float32 = 640
-var screenHeight: float32  = 512
-let scale_factor: float32 = 1
-let videoMode = videoMode(cint(screenWidth*scale_factor), cint(screenHeight*scale_factor))
-var window* = newRenderWindow(videoMode, "ps-too")
-let clear_color = color(0, 0, 0)
-window.clear clear_color
-window.display()
+import pkg/nint128, strutils
 
 var dram: array[0x400000, uint8]
 var vram: array[1024*1024*4, uint8]
-var vram_texture = newTexture(cint(1024), cint(1024))
-var vram_sprite = newSprite(vram_texture)
-vram_sprite.scale = vec2(scale_factor, scale_factor)
+#var vram_texture = newTexture(cint(1024), cint(1024))
+#var vram_sprite = newSprite(vram_texture)
+#vram_sprite.scale = vec2(scale_factor, scale_factor)
 
-var vertex_array = newVertexArray(PrimitiveType.Triangles)
+#var vertex_array = newVertexArray(PrimitiveType.Triangles)
 
 var debug* = false
 
@@ -81,34 +71,6 @@ const block_layout: array[32, int] = [0,  1,  4,  5,  16, 17, 20, 21,
 var cur_transfer_x: uint32
 var cur_transfer_y: uint32
 
-proc display_frame*() =     
-    updateFromPixels(vram_texture, vram[0].addr, cint(1024), cint(1024), cint(0), cint(0))
-    window.clear clear_color
-    window.draw(vram_sprite)
-    window.draw(vertex_array)
-    window.display()
-    vertex_array.clear()
-
-proc parse_events*() =
-    var event: Event
-    while window.pollEvent(event):
-        case event.kind:
-            of EventType.Closed:
-                window.close()
-                vertex_array.destroy()
-                vram_texture.destroy()
-                vram_sprite.destroy()
-                quit()
-            of EventType.KeyPressed:
-                case event.key.code:
-                    of KeyCode.D: debug = true
-                    else: discard
-            of EventType.KeyReleased:
-                case event.key.code:
-                    of KeyCode.D: debug = false
-                    else: discard
-            else: discard
-
 var CLAMP_2: uint64
 var PRMODECONT: uint64
 var SCISSOR_1: uint64
@@ -134,9 +96,9 @@ proc vertex_kick() =
 
 proc draw_kick() =
     if cur_vertex_buffer_size >= 3:
-        vertex_array.append vertex(vec2(cfloat((vertex_buffer[2].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[2].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[2].r), uint8(vertex_buffer[2].g), uint8(vertex_buffer[2].b)))
-        vertex_array.append vertex(vec2(cfloat((vertex_buffer[1].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[1].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[1].r), uint8(vertex_buffer[1].g), uint8(vertex_buffer[1].b)))
-        vertex_array.append vertex(vec2(cfloat((vertex_buffer[0].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[0].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[0].r), uint8(vertex_buffer[0].g), uint8(vertex_buffer[0].b)))
+        #vertex_array.append vertex(vec2(cfloat((vertex_buffer[2].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[2].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[2].r), uint8(vertex_buffer[2].g), uint8(vertex_buffer[2].b)))
+        #vertex_array.append vertex(vec2(cfloat((vertex_buffer[1].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[1].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[1].r), uint8(vertex_buffer[1].g), uint8(vertex_buffer[1].b)))
+        #vertex_array.append vertex(vec2(cfloat((vertex_buffer[0].x - XYOFFSET_1.x) mod 620), cfloat((vertex_buffer[0].y - XYOFFSET_1.y) mod 512)), color(uint8(vertex_buffer[0].r), uint8(vertex_buffer[0].g), uint8(vertex_buffer[0].b)))
         cur_vertex_buffer_size = 2
 
 proc write_hwreg(data: uint64) =
